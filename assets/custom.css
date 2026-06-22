@@ -1,0 +1,19 @@
+body { background:#0f1117; color:#e0e0e0; font-family:'Segoe UI',sans-serif; margin:0; }
+.kpi-card { background:#1e2130; border-radius:10px; padding:20px; text-align:center; border:1px solid #2d3250; }
+.kpi-number { font-size:2.5rem; font-weight:bold; margin:5px 0; }
+.kpi-label { color:#888; font-size:0.85rem; }
+.kpi-total { color:#a0aec0; } .kpi-running { color:#63b3ed; }
+.kpi-success { color:#68d391; } .kpi-failed { color:#fc8181; }
+.kpi-slow { color:#f6ad55; }
+.progress-bar-bg { background:#2d3250; border-radius:6px; height:22px; overflow:hidden; }
+.progress-bar-fill { height:100%; border-radius:6px; transition:width 0.5s; }
+.progress-normal { background:linear-gradient(90deg,#3182ce,#63b3ed); }
+.progress-slow { background:linear-gradient(90deg,#c05621,#f6ad55); }
+.progress-veryslow { background:linear-gradient(90deg,#c53030,#fc8181); }
+.section-title { font-size:1rem; font-weight:600; color:#a0aec0; letter-spacing:.05em; margin-bottom:12px; text-transform:uppercase; }
+.job-row { background:#1e2130; border-radius:8px; padding:12px 16px; margin-bottom:8px; border:1px solid #2d3250; }
+.status-badge { display:inline-block; padding:2px 10px; border-radius:12px; font-size:.78rem; font-weight:600; }
+.badge-success { background:#1c4532; color:#68d391; } .badge-failed { background:#3b1c1c; color:#fc8181; }
+.badge-running { background:#1a365d; color:#63b3ed; } .badge-slow { background:#3d2b0a; color:#f6ad55; }
+.badge-veryslow { background:#3b1c1c; color:#fc8181; } .badge-canceled { background:#2d3250; color:#a0aec0; }
+.badge-retry { background:#2a2050; color:#b794f4; }
