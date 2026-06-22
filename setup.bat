@@ -34,7 +34,7 @@ echo.
 
 echo [1/2] Package ha dar hal nasb...
 %PYTHON_CMD% -m pip install --upgrade pip setuptools setuptools_scm -q
-%PYTHON_CMD% -m pip install dash plotly pandas pymssql
+%PYTHON_CMD% -m pip install dash plotly pandas pyodbc
 
 if errorlevel 1 (
     echo.

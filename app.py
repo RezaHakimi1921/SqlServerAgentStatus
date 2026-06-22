@@ -14,7 +14,7 @@ app = dash.Dash(__name__, title="SQL Agent Monitor", suppress_callback_exception
 # ── Layout ─────────────────────────────────────────────────────────────────────
 app.layout = html.Div([
     dcc.Store(id="selected-job-store"),
-    dcc.Interval(id="interval", interval=5000, n_intervals=0),
+    dcc.Interval(id="interval", interval=60000, n_intervals=0),
 
     # Header
     html.Div([
