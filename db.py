@@ -6,7 +6,7 @@ DB_CONFIG = {
     "user": "ClaudeGraph",
     "password": "reza123123",
     "database": "msdb",
-    "tds_version": "7.0",
+    "tds_version": "7.4",
 }
 
 STATUS_LABELS = {0: "Failed", 1: "Succeeded", 2: "Retry", 3: "Canceled"}
