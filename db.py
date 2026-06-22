@@ -82,7 +82,8 @@ def get_job_history():
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT CONVERT(VARCHAR(36), jh.job_id) AS job_id, j.name,
+        SELECT TOP 2000
+               CONVERT(VARCHAR(36), jh.job_id) AS job_id, j.name,
                jh.step_id, jh.step_name, jh.run_date, jh.run_time,
                jh.run_duration, jh.run_status, jh.message
         FROM msdb.dbo.sysjobhistory jh
@@ -103,7 +104,8 @@ def get_step_history(job_id: str):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT jh.step_id, jh.step_name, jh.run_date, jh.run_time,
+        SELECT TOP 500
+               jh.step_id, jh.step_name, jh.run_date, jh.run_time,
                jh.run_duration, jh.run_status, jh.message
         FROM msdb.dbo.sysjobhistory jh
         WHERE CONVERT(VARCHAR(36), jh.job_id) = ? AND jh.step_id > 0
