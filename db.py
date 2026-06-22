@@ -19,6 +19,8 @@ def get_connection():
         password=DB_CONFIG["password"],
         database=DB_CONFIG["database"],
         tds_version=DB_CONFIG["tds_version"],
+        login_timeout=5,
+        timeout=10,
     )
 
 
