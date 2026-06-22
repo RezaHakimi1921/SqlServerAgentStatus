@@ -324,7 +324,14 @@ def render_timeline():
 
         fig = go.Figure()
 
-        for h in history:
+        today = datetime.now().date()
+        # فقط امروز، بدون cdc jobs
+        history_today = [
+            h for h in history
+            if h["start_dt"].date() == today and not h["name"].lower().startswith("cdc.")
+        ]
+
+        for h in history_today:
             start_ms = int(h["start_dt"].timestamp() * 1000)
             dur_ms = max(h["duration_seconds"] * 1000, 60000)
             color = COLORS.get(h["status_label"], "#718096")
@@ -333,14 +340,15 @@ def render_timeline():
                 orientation="h", marker_color=color, showlegend=False,
                 hovertemplate=(
                     f"<b>{h['name']}</b><br>"
-                    f"شروع: {h['start_dt'].strftime('%Y-%m-%d %H:%M:%S')}<br>"
+                    f"شروع: {h['start_dt'].strftime('%H:%M:%S')}<br>"
                     f"مدت: {calculations.fmt_seconds(h['duration_seconds'])}<br>"
                     f"وضعیت: {h['status_label']}<extra></extra>"
                 ),
             ))
 
         now = datetime.now()
-        for r in running:
+        running_today = [r for r in running if not r["name"].lower().startswith("cdc.")]
+        for r in running_today:
             start_ms = int(r["start_execution_date"].timestamp() * 1000)
             elapsed_ms = max(int((now - r["start_execution_date"]).total_seconds() * 1000), 60000)
             fig.add_trace(go.Bar(
@@ -356,7 +364,7 @@ def render_timeline():
         for lbl, clr in COLORS.items():
             fig.add_trace(go.Bar(x=[None], y=[None], marker_color=clr, name=lbl, showlegend=True))
 
-        job_names = list(dict.fromkeys([h["name"] for h in history] + [r["name"] for r in running]))
+        job_names = list(dict.fromkeys([h["name"] for h in history_today] + [r["name"] for r in running_today]))
         fig.update_layout(
             barmode="overlay",
             paper_bgcolor="#161929", plot_bgcolor="#0d1117",
