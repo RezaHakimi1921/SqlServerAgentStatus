@@ -4,19 +4,26 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Fallback values used if .env is missing
+_SERVER   = os.getenv("SQL_SERVER",   "192.168.210.131")
+_DATABASE = os.getenv("SQL_DATABASE", "msdb")
+_USER     = os.getenv("SQL_USER",     "__REDACTED__")
+_PASSWORD = os.getenv("SQL_PASSWORD", "__REDACTED__")
+_TIMEOUT  = int(os.getenv("SQL_TIMEOUT", "10"))
+
 CONN_STR = (
-    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-    f"SERVER={os.getenv('SQL_SERVER', '192.168.210.131')};"
-    f"DATABASE={os.getenv('SQL_DATABASE', 'msdb')};"
-    f"UID={os.getenv('SQL_USER', '__REDACTED__')};"
-    f"PWD={os.getenv('SQL_PASSWORD', '')};"
-    f"TrustServerCertificate={os.getenv('SQL_TRUST_CERT', 'yes')};"
-    f"Encrypt={os.getenv('SQL_ENCRYPT', 'no')};"
-    f"Connection Timeout={os.getenv('SQL_TIMEOUT', '10')};"
+    "DRIVER={ODBC Driver 17 for SQL Server};"
+    f"SERVER={_SERVER};"
+    f"DATABASE={_DATABASE};"
+    f"UID={_USER};"
+    f"PWD={_PASSWORD};"
+    "TrustServerCertificate=yes;"
+    "Encrypt=no;"
+    f"Connection Timeout={_TIMEOUT};"
 )
 
 def get_connection():
-    return pyodbc.connect(CONN_STR, timeout=int(os.getenv('SQL_TIMEOUT', '10')))
+    return pyodbc.connect(CONN_STR, timeout=_TIMEOUT)
 
 def rows_to_dicts(cursor):
     cols = [c[0] for c in cursor.description]
