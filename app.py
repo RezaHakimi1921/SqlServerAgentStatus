@@ -9,6 +9,20 @@ import plotly.graph_objects as go
 import db
 import calculations
 
+# ── Startup connection test ────────────────────────────────────────────────────
+print("\n" + "="*50)
+print("Testing SQL Server connection...")
+try:
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT @@VERSION")
+    ver = cursor.fetchone()[0].split("\n")[0]
+    conn.close()
+    print(f"✓ Connected: {ver}")
+except Exception as e:
+    print(f"✗ Connection FAILED: {e}")
+print("="*50 + "\n")
+
 app = dash.Dash(__name__, title="SQL Agent Monitor", suppress_callback_exceptions=True)
 
 # ── Layout ─────────────────────────────────────────────────────────────────────
