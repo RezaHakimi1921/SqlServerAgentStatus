@@ -2,7 +2,7 @@ import pymssql
 from datetime import datetime
 
 DB_CONFIG = {
-    "host": "192.169.210.131",
+    "host": "192.168.210.131",
     "user": "__REDACTED__",
     "password": "__REDACTED__",
     "database": "msdb",
