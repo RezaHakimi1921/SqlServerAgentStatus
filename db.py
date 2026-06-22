@@ -4,12 +4,21 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Fallback values used if .env is missing
-_SERVER   = os.getenv("SQL_SERVER",   "192.168.210.131")
+# All credentials are read from .env (never hardcoded — see .env.example)
+_SERVER   = os.getenv("SQL_SERVER")
 _DATABASE = os.getenv("SQL_DATABASE", "msdb")
-_USER     = os.getenv("SQL_USER",     "__REDACTED__")
-_PASSWORD = os.getenv("SQL_PASSWORD", "__REDACTED__")
+_USER     = os.getenv("SQL_USER")
+_PASSWORD = os.getenv("SQL_PASSWORD")
 _TIMEOUT  = int(os.getenv("SQL_TIMEOUT", "10"))
+
+_missing = [n for n, v in (("SQL_SERVER", _SERVER),
+                           ("SQL_USER", _USER),
+                           ("SQL_PASSWORD", _PASSWORD)) if not v]
+if _missing:
+    raise RuntimeError(
+        "Missing required environment variables: " + ", ".join(_missing) +
+        ". Copy .env.example to .env and fill in your SQL Server credentials."
+    )
 
 CONN_STR = (
     "DRIVER={ODBC Driver 17 for SQL Server};"
