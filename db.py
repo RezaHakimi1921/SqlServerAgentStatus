@@ -81,15 +81,27 @@ def get_running_jobs():
 def get_job_history():
     conn = get_connection()
     cursor = conn.cursor()
+    # آخرین 30 اجرا برای هر job به صورت جداگانه
     cursor.execute("""
-        SELECT TOP 2000
-               CONVERT(VARCHAR(36), jh.job_id) AS job_id, j.name,
-               jh.step_id, jh.step_name, jh.run_date, jh.run_time,
-               jh.run_duration, jh.run_status, jh.message
-        FROM msdb.dbo.sysjobhistory jh
-        JOIN msdb.dbo.sysjobs j ON j.job_id = jh.job_id
-        WHERE jh.step_id = 0
-        ORDER BY jh.run_date DESC, jh.run_time DESC
+        WITH ranked AS (
+            SELECT
+                CONVERT(VARCHAR(36), jh.job_id) AS job_id,
+                j.name,
+                jh.step_id, jh.step_name, jh.run_date, jh.run_time,
+                jh.run_duration, jh.run_status, jh.message,
+                ROW_NUMBER() OVER (
+                    PARTITION BY jh.job_id
+                    ORDER BY jh.run_date DESC, jh.run_time DESC
+                ) AS rn
+            FROM msdb.dbo.sysjobhistory jh
+            JOIN msdb.dbo.sysjobs j ON j.job_id = jh.job_id
+            WHERE jh.step_id = 0
+        )
+        SELECT job_id, name, step_id, step_name, run_date, run_time,
+               run_duration, run_status, message
+        FROM ranked
+        WHERE rn <= 30
+        ORDER BY run_date DESC, run_time DESC
     """)
     rows = rows_to_dicts(cursor)
     conn.close()
