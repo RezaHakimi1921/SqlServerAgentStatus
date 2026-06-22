@@ -32,8 +32,8 @@ echo Python: %PYTHON_CMD%
 echo.
 
 echo [1/2] Package ha dar hal nasb...
-%PYTHON_CMD% -m pip install --upgrade pip -q
-%PYTHON_CMD% -m pip install dash==2.17.1 plotly==5.22.0 pymssql==2.3.1 pandas==2.2.2
+%PYTHON_CMD% -m pip install --upgrade pip setuptools setuptools_scm -q
+%PYTHON_CMD% -m pip install dash plotly pandas pymssql
 
 if errorlevel 1 (
     echo.
