@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 
 import dash
-from dash import dcc, html, Input, Output
+from dash import dcc, html, Input, Output, State, ALL, ctx
 import plotly.graph_objects as go
 from dotenv import load_dotenv
 
@@ -21,18 +21,24 @@ app.title = "SQL Server Agent Monitor"
 STATUS_LABEL = {0: "ناموفق", 1: "موفق", 2: "تلاش مجدد", 3: "لغو شده"}
 STATUS_COLOR = {0: "#e74c3c", 1: "#2ecc71", 2: "#f39c12", 3: "#95a5a6"}
 
+BTN = {"background": "#2d3250", "color": "#e0e0e0", "border": "1px solid #3d4470",
+       "borderRadius": "4px", "padding": "3px 10px", "cursor": "pointer", "fontSize": "12px"}
+
 def kpi_card(title, value, color="#e0e0e0", bg="#1a1d2e"):
     return html.Div([
-        html.Div(str(value), style={"fontSize": "32px", "fontWeight": "bold", "color": color, "lineHeight": "1"}),
-        html.Div(title, style={"fontSize": "12px", "color": "#888", "marginTop": "4px"}),
-    ], style={"background": bg, "borderRadius": "10px", "padding": "16px 24px",
-              "flex": "1", "minWidth": "130px", "border": "1px solid #2d3250"})
+        html.Div(str(value), style={"fontSize": "30px", "fontWeight": "bold",
+                                    "color": color, "lineHeight": "1"}),
+        html.Div(title, style={"fontSize": "11px", "color": "#888", "marginTop": "4px"}),
+    ], style={"background": bg, "borderRadius": "10px", "padding": "14px 20px",
+              "flex": "1", "minWidth": "120px", "border": "1px solid #2d3250"})
 
 app.layout = html.Div([
     dcc.Store(id="store-data"),
     dcc.Store(id="store-error"),
+    dcc.Store(id="nav-job-id"),          # carries job_id when clicking جزئیات
     dcc.Interval(id="interval", interval=REFRESH_INTERVAL, n_intervals=0),
 
+    # ── Header ──
     html.Div([
         html.H1("SQL Server Agent Monitor", style={"margin": "0", "fontSize": "20px"}),
         html.Span(id="last-update", style={"fontSize": "12px", "color": "#888"}),
@@ -75,7 +81,8 @@ def fetch_data(_):
             return [{k: dt_str(v) for k, v in r.items()} for r in rows]
 
         now_str = datetime.now().strftime("%H:%M:%S")
-        return {"running": serialize(running_raw), "history": serialize(history)}, None, f"آخرین بروزرسانی: {now_str}"
+        return ({"running": serialize(running_raw), "history": serialize(history)},
+                None, f"آخرین بروزرسانی: {now_str}")
     except Exception as e:
         return dash.no_update, str(e), f"خطا: {datetime.now().strftime('%H:%M:%S')}"
 
@@ -88,7 +95,7 @@ def show_error(err):
         html.Strong("⚠ خطا در اتصال به SQL Server"),
         html.P(str(err), style={"margin": "4px 0 0", "fontSize": "12px"}),
     ], style={"background": "#5a1a1a", "border": "1px solid #e74c3c",
-              "borderRadius": "6px", "padding": "10px 16px", "margin": "8px 16px"})
+              "borderRadius": "6px", "padding": "10px 16px", "margin": "0 16px 8px"})
 
 # ── KPI bar ───────────────────────────────────────────────────────────────────
 @app.callback(Output("kpi-bar", "children"), Input("store-data", "data"))
@@ -103,23 +110,20 @@ def render_kpi(data):
         if h["job_id"] not in latest:
             latest[h["job_id"]] = h
 
-    total = len(latest)
-    succeeded = sum(1 for h in latest.values() if h["run_status"] == 1)
-    failed = sum(1 for h in latest.values() if h["run_status"] == 0)
-    n_running = len(running)
-
-    today = datetime.now().date().isoformat()
-    failed_today = sum(
-        1 for h in history
-        if h["run_status"] == 0 and (h.get("start_dt") or "")[:10] == today
-    )
+    total    = len(latest)
+    n_run    = len(running)
+    succ     = sum(1 for h in latest.values() if h["run_status"] == 1)
+    fail     = sum(1 for h in latest.values() if h["run_status"] == 0)
+    today    = datetime.now().date().isoformat()
+    fail_today = sum(1 for h in history
+                     if h["run_status"] == 0 and (h.get("start_dt") or "")[:10] == today)
 
     return [
         kpi_card("کل جاب‌ها", total),
-        kpi_card("در حال اجرا", n_running, color="#3498db", bg="#0d1b2a"),
-        kpi_card("آخرین اجرا موفق", succeeded, color="#2ecc71", bg="#0d1f15"),
-        kpi_card("آخرین اجرا ناموفق", failed, color="#e74c3c", bg="#1f0d0d"),
-        kpi_card("ناموفق امروز", failed_today, color="#f39c12", bg="#1f160d"),
+        kpi_card("در حال اجرا", n_run,    color="#3498db", bg="#0d1b2a"),
+        kpi_card("آخرین: موفق", succ,    color="#2ecc71", bg="#0d1f15"),
+        kpi_card("آخرین: ناموفق", fail,  color="#e74c3c", bg="#1f0d0d"),
+        kpi_card("ناموفق امروز", fail_today, color="#f39c12", bg="#1f160d"),
     ]
 
 # ── Tab router ────────────────────────────────────────────────────────────────
@@ -127,8 +131,9 @@ def render_kpi(data):
     Output("tab-content", "children"),
     Input("tabs", "value"),
     Input("store-data", "data"),
+    Input("nav-job-id", "data"),
 )
-def render_tab(tab, data):
+def render_tab(tab, data, nav_job_id):
     if not data:
         return html.P("در حال بارگذاری...", style={"color": "#888"})
 
@@ -150,7 +155,7 @@ def render_tab(tab, data):
     for h in data.get("history", []):
         row = dict(h)
         row["start_dt"] = parse_dt(h.get("start_dt"))
-        row["end_dt"] = parse_dt(h.get("end_dt"))
+        row["end_dt"]   = parse_dt(h.get("end_dt"))
         history.append(row)
 
     job_stats = calc_job_stats(history)
@@ -158,17 +163,51 @@ def render_tab(tab, data):
     if tab == "running":
         return render_running(running, job_stats)
     elif tab == "all":
-        return render_all(history)
+        return render_all_layout(history)
     elif tab == "gantt":
         return render_gantt(history, running)
     elif tab == "detail":
-        return render_detail_selector(history)
+        return render_detail_selector(history, nav_job_id)
     return html.P("نامعلوم")
+
+# ── Navigate to detail tab when جزئیات button clicked ────────────────────────
+@app.callback(
+    Output("tabs", "value"),
+    Output("nav-job-id", "data"),
+    Input({"type": "detail-btn", "job_id": ALL}, "n_clicks"),
+    State({"type": "detail-btn", "job_id": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def go_to_detail(n_clicks_list, ids):
+    if not any(n for n in n_clicks_list if n):
+        return dash.no_update, dash.no_update
+    triggered = ctx.triggered_id
+    if triggered and isinstance(triggered, dict):
+        return "detail", triggered["job_id"]
+    return dash.no_update, dash.no_update
 
 # ── Running tab ───────────────────────────────────────────────────────────────
 def render_running(running, job_stats):
+    slow_count = sum(1 for r in running
+                     if calc_progress(r["job_id"], r.get("start_dt"), job_stats)[2])
+    vslow_count = sum(1 for r in running
+                      if calc_progress(r["job_id"], r.get("start_dt"), job_stats)[3])
+
+    summary = html.Div([
+        html.Span(f"در حال اجرا: {len(running)}",
+                  style={"color": "#3498db", "marginRight": "20px"}),
+        html.Span(f"کند: {slow_count}",
+                  style={"color": "#f39c12", "marginRight": "20px"}),
+        html.Span(f"خیلی کند: {vslow_count}",
+                  style={"color": "#e74c3c"}),
+    ], style={"background": "#1a1d2e", "borderRadius": "8px", "padding": "10px 16px",
+              "marginBottom": "14px", "fontSize": "13px", "border": "1px solid #2d3250"})
+
     if not running:
-        return html.P("هیچ جابی در حال اجرا نیست.", style={"color": "#888"})
+        return html.Div([
+            summary,
+            html.P("هیچ جابی در حال اجرا نیست.", style={"color": "#888"}),
+        ])
 
     cards = []
     for r in running:
@@ -197,7 +236,11 @@ def render_running(running, job_stats):
             html.Div([
                 html.Span(r["name"], style={"fontWeight": "bold", "fontSize": "14px"}),
                 html.Span(badge_text, style=badge_style),
-            ], style={"display": "flex", "gap": "10px", "alignItems": "center", "marginBottom": "8px"}),
+                html.Button("جزئیات", n_clicks=0,
+                            id={"type": "detail-btn", "job_id": r["job_id"]},
+                            style={**BTN, "marginLeft": "auto"}),
+            ], style={"display": "flex", "gap": "10px", "alignItems": "center",
+                      "marginBottom": "8px"}),
             html.Div([
                 html.Span(f"شروع: {start.strftime('%H:%M:%S') if start else '-'}"),
                 html.Span(f"سپری: {fmt_seconds(elapsed)}"),
@@ -212,19 +255,74 @@ def render_running(running, job_stats):
                                             "marginTop": "4px", "textAlign": "right"}),
         ], style={"background": "#1a1d2e", "borderRadius": "8px", "padding": "14px",
                   "marginBottom": "10px", "border": "1px solid #2d3250"}))
-    return html.Div(cards)
 
-# ── All jobs tab ──────────────────────────────────────────────────────────────
-def render_all(history):
+    return html.Div([summary] + cards)
+
+# ── All jobs tab — layout with date picker ────────────────────────────────────
+def render_all_layout(history):
+    today_str = datetime.now().date().isoformat()
+    # Build list of available dates from history
+    dates = sorted({(h.get("start_dt") or "")[:10] for h in history
+                    if (h.get("start_dt") or "")[:10]}, reverse=True)
+
+    return html.Div([
+        html.Div([
+            html.Label("فیلتر تاریخ:", style={"fontSize": "13px", "marginLeft": "8px",
+                                               "lineHeight": "36px"}),
+            dcc.Dropdown(
+                id="all-date-filter",
+                options=[{"label": d, "value": d} for d in dates],
+                value=today_str if today_str in dates else (dates[0] if dates else None),
+                clearable=False,
+                style={"width": "160px", "color": "#000"},
+            ),
+        ], style={"display": "flex", "alignItems": "center", "gap": "8px",
+                  "marginBottom": "14px"}),
+        html.Div(id="all-table-container"),
+    ])
+
+@app.callback(
+    Output("all-table-container", "children"),
+    Input("all-date-filter", "value"),
+    Input("store-data", "data"),
+)
+def render_all_table(selected_date, data):
+    if not data or not selected_date:
+        return html.P("داده‌ای یافت نشد.", style={"color": "#888"})
+
+    def parse_dt(s):
+        if s and isinstance(s, str):
+            try:
+                return datetime.fromisoformat(s)
+            except Exception:
+                return None
+        return s
+
+    history = []
+    for h in data.get("history", []):
+        row = dict(h)
+        row["start_dt"] = parse_dt(h.get("start_dt"))
+        row["end_dt"]   = parse_dt(h.get("end_dt"))
+        history.append(row)
+
+    # Latest run per job on the selected date
     latest = {}
     for h in history:
+        dt_str = (h.get("start_dt").date().isoformat()
+                  if h.get("start_dt") else "")
+        if dt_str != selected_date:
+            continue
         if h["job_id"] not in latest:
             latest[h["job_id"]] = h
+
+    if not latest:
+        return html.P(f"هیچ جابی در تاریخ {selected_date} یافت نشد.",
+                      style={"color": "#888"})
 
     rows = []
     for i, h in enumerate(latest.values()):
         status = h["run_status"]
-        start = h.get("start_dt")
+        start  = h.get("start_dt")
         rows.append(html.Tr([
             html.Td(h["name"], style={"padding": "8px 12px"}),
             html.Td(html.Span(STATUS_LABEL.get(status, "نامعلوم"),
@@ -232,16 +330,22 @@ def render_all(history):
                                      "color": "#fff", "padding": "2px 8px",
                                      "borderRadius": "4px", "fontSize": "12px"}),
                     style={"padding": "8px 12px"}),
-            html.Td(start.strftime("%Y/%m/%d %H:%M") if start else "-",
+            html.Td(start.strftime("%H:%M") if start else "-",
                     style={"padding": "8px 12px", "fontSize": "13px", "color": "#aaa"}),
-            html.Td(fmt_seconds(h.get("duration_seconds")), style={"padding": "8px 12px"}),
+            html.Td(fmt_seconds(h.get("duration_seconds")),
+                    style={"padding": "8px 12px"}),
+            html.Td(
+                html.Button("جزئیات", n_clicks=0,
+                            id={"type": "detail-btn", "job_id": h["job_id"]},
+                            style=BTN),
+                style={"padding": "8px 12px"}),
         ], style={"borderBottom": "1px solid #2d3250",
                   "background": "#1a1d2e" if i % 2 == 0 else "#0f1117"}))
 
     header = html.Tr([
         html.Th(t, style={"padding": "10px 12px", "textAlign": "right",
                            "background": "#2d3250", "color": "#ccc", "fontSize": "13px"})
-        for t in ["نام جاب", "وضعیت", "آخرین اجرا", "مدت"]
+        for t in ["نام جاب", "وضعیت", "شروع", "مدت", ""]
     ])
     return html.Div(
         html.Table([html.Thead(header), html.Tbody(rows)],
@@ -251,7 +355,7 @@ def render_all(history):
 # ── Gantt tab ─────────────────────────────────────────────────────────────────
 def render_gantt(history, running):
     today = datetime.now().date()
-    now = datetime.now()
+    now   = datetime.now()
 
     bars = [h for h in history
             if h.get("start_dt") and h.get("end_dt")
@@ -270,21 +374,18 @@ def render_gantt(history, running):
     color_map = {0: "#e74c3c", 1: "#2ecc71", 2: "#f39c12", 3: "#95a5a6"}
 
     for b in bars:
-        color = color_map.get(b["run_status"], "#888")
-        dur = fmt_seconds(b.get("duration_seconds"))
         fig.add_trace(go.Bar(
             x=[(b["end_dt"] - b["start_dt"]).total_seconds() * 1000],
             y=[b["name"]],
             base=[b["start_dt"].timestamp() * 1000],
             orientation="h",
-            marker_color=color,
-            marker_line_width=0,
-            width=0.5,
+            marker_color=color_map.get(b["run_status"], "#888"),
+            marker_line_width=0, width=0.5,
             hovertemplate=(
                 f"<b>{b['name']}</b><br>"
                 f"شروع: {b['start_dt'].strftime('%H:%M:%S')}<br>"
                 f"پایان: {b['end_dt'].strftime('%H:%M:%S')}<br>"
-                f"مدت: {dur}<br>"
+                f"مدت: {fmt_seconds(b.get('duration_seconds'))}<br>"
                 f"وضعیت: {STATUS_LABEL.get(b['run_status'], '?')}<extra></extra>"
             ),
             showlegend=False,
@@ -292,15 +393,13 @@ def render_gantt(history, running):
 
     for r in running_bars:
         start = r["start_dt"]
-        elapsed_ms = (now - start).total_seconds() * 1000
         fig.add_trace(go.Bar(
-            x=[elapsed_ms],
+            x=[(now - start).total_seconds() * 1000],
             y=[r["name"]],
             base=[start.timestamp() * 1000],
             orientation="h",
             marker_color="#3498db",
-            marker_line_width=0,
-            width=0.5,
+            marker_line_width=0, width=0.5,
             hovertemplate=(
                 f"<b>{r['name']}</b><br>"
                 f"شروع: {start.strftime('%H:%M:%S')}<br>"
@@ -312,11 +411,11 @@ def render_gantt(history, running):
     day_start = datetime.combine(today, datetime.min.time())
     fig.update_layout(
         barmode="overlay",
-        plot_bgcolor="#0f1117",
-        paper_bgcolor="#0f1117",
+        plot_bgcolor="#0f1117", paper_bgcolor="#0f1117",
         font={"color": "#e0e0e0", "size": 11},
         xaxis={"type": "date",
-               "range": [day_start.timestamp() * 1000, (now + timedelta(hours=1)).timestamp() * 1000],
+               "range": [day_start.timestamp() * 1000,
+                         (now + timedelta(hours=1)).timestamp() * 1000],
                "tickformat": "%H:%M", "gridcolor": "#2d3250", "title": "زمان"},
         yaxis={"categoryorder": "array", "categoryarray": list(reversed(all_names)),
                "gridcolor": "#2d3250", "automargin": True},
@@ -326,10 +425,10 @@ def render_gantt(history, running):
     )
 
     legend = [
-        html.Span("● موفق", style={"color": "#2ecc71", "marginRight": "16px"}),
-        html.Span("● ناموفق", style={"color": "#e74c3c", "marginRight": "16px"}),
+        html.Span("● موفق",        style={"color": "#2ecc71", "marginRight": "16px"}),
+        html.Span("● ناموفق",      style={"color": "#e74c3c", "marginRight": "16px"}),
         html.Span("● در حال اجرا", style={"color": "#3498db", "marginRight": "16px"}),
-        html.Span("● لغو/تلاش", style={"color": "#f39c12"}),
+        html.Span("● لغو/تلاش",   style={"color": "#f39c12"}),
     ]
     return html.Div([
         html.Div(legend, style={"marginBottom": "8px", "fontSize": "12px"}),
@@ -338,7 +437,7 @@ def render_gantt(history, running):
     ])
 
 # ── Detail tab ────────────────────────────────────────────────────────────────
-def render_detail_selector(history):
+def render_detail_selector(history, preselect_job_id=None):
     job_names = {}
     for h in history:
         if h["job_id"] not in job_names:
@@ -346,10 +445,15 @@ def render_detail_selector(history):
 
     options = [{"label": name, "value": jid}
                for jid, name in sorted(job_names.items(), key=lambda x: x[1])]
+
     return html.Div([
-        dcc.Dropdown(id="job-select", options=options,
-                     placeholder="یک جاب انتخاب کنید...",
-                     style={"color": "#000", "marginBottom": "16px"}),
+        dcc.Dropdown(
+            id="job-select",
+            options=options,
+            value=preselect_job_id,
+            placeholder="یک جاب انتخاب کنید...",
+            style={"color": "#000", "marginBottom": "16px"},
+        ),
         html.Div(id="job-detail-content"),
     ])
 
@@ -373,15 +477,15 @@ def show_job_detail(job_id):
 
     rows = []
     for s in steps:
-        dt = parse_run_datetime(s["run_date"], s["run_time"])
+        dt  = parse_run_datetime(s["run_date"], s["run_time"])
         dur = parse_run_duration(s["run_duration"])
         status = s["run_status"]
         rows.append(html.Tr([
             html.Td(str(s["step_id"]), style={"padding": "6px 10px", "color": "#888"}),
-            html.Td(s["step_name"], style={"padding": "6px 10px"}),
+            html.Td(s["step_name"],    style={"padding": "6px 10px"}),
             html.Td(dt.strftime("%m/%d %H:%M:%S") if dt else "-",
                     style={"padding": "6px 10px", "fontSize": "12px", "color": "#aaa"}),
-            html.Td(fmt_seconds(dur), style={"padding": "6px 10px"}),
+            html.Td(fmt_seconds(dur),  style={"padding": "6px 10px"}),
             html.Td(html.Span(STATUS_LABEL.get(status, "نامعلوم"),
                               style={"background": STATUS_COLOR.get(status, "#888"),
                                      "color": "#fff", "padding": "2px 6px",
