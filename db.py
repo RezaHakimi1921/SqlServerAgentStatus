@@ -1,30 +1,31 @@
+import os
 import pyodbc
-from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 CONN_STR = (
-    "DRIVER={ODBC Driver 17 for SQL Server};"
-    "SERVER=192.168.210.131;"
-    "DATABASE=msdb;"
-    "UID=__REDACTED__;"
-    "PWD=__REDACTED__;"
-    "TrustServerCertificate=yes;"
-    "Encrypt=no;"
-    "Connection Timeout=10;"
+    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+    f"SERVER={os.getenv('SQL_SERVER', '192.168.210.131')};"
+    f"DATABASE={os.getenv('SQL_DATABASE', 'msdb')};"
+    f"UID={os.getenv('SQL_USER', '__REDACTED__')};"
+    f"PWD={os.getenv('SQL_PASSWORD', '')};"
+    f"TrustServerCertificate={os.getenv('SQL_TRUST_CERT', 'yes')};"
+    f"Encrypt={os.getenv('SQL_ENCRYPT', 'no')};"
+    f"Connection Timeout={os.getenv('SQL_TIMEOUT', '10')};"
 )
 
 def get_connection():
-    return pyodbc.connect(CONN_STR, timeout=10)
+    return pyodbc.connect(CONN_STR, timeout=int(os.getenv('SQL_TIMEOUT', '10')))
 
 def rows_to_dicts(cursor):
     cols = [c[0] for c in cursor.description]
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 def get_all_data():
-    """Single connection fetches running jobs + history for the whole dashboard."""
     conn = get_connection()
     try:
         cur = conn.cursor()
-
         cur.execute("""
             SELECT
                 CONVERT(VARCHAR(36), ja.job_id) AS job_id,
@@ -74,7 +75,6 @@ def get_all_data():
             ORDER BY run_date DESC, run_time DESC
         """)
         history_raw = rows_to_dicts(cur)
-
         return running, history_raw
     finally:
         conn.close()
