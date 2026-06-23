@@ -1,142 +1,118 @@
+import os
 import pyodbc
-from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# All credentials are read from .env (never hardcoded — see .env.example)
+_SERVER   = os.getenv("SQL_SERVER")
+_DATABASE = os.getenv("SQL_DATABASE", "msdb")
+_USER     = os.getenv("SQL_USER")
+_PASSWORD = os.getenv("SQL_PASSWORD")
+_TIMEOUT  = int(os.getenv("SQL_TIMEOUT", "10"))
+
+_missing = [n for n, v in (("SQL_SERVER", _SERVER),
+                           ("SQL_USER", _USER),
+                           ("SQL_PASSWORD", _PASSWORD)) if not v]
+if _missing:
+    raise RuntimeError(
+        "Missing required environment variables: " + ", ".join(_missing) +
+        ". Copy .env.example to .env and fill in your SQL Server credentials."
+    )
 
 CONN_STR = (
     "DRIVER={ODBC Driver 17 for SQL Server};"
-    "SERVER=192.168.210.131;"
-    "DATABASE=msdb;"
-    "UID=ClaudeGraph;"
-    "PWD=reza123123;"
+    f"SERVER={_SERVER};"
+    f"DATABASE={_DATABASE};"
+    f"UID={_USER};"
+    f"PWD={_PASSWORD};"
     "TrustServerCertificate=yes;"
     "Encrypt=no;"
-    "Connection Timeout=5;"
+    f"Connection Timeout={_TIMEOUT};"
 )
 
-STATUS_LABELS = {0: "Failed", 1: "Succeeded", 2: "Retry", 3: "Canceled"}
-
-
 def get_connection():
-    return pyodbc.connect(CONN_STR, timeout=5)
-
+    return pyodbc.connect(CONN_STR, timeout=_TIMEOUT)
 
 def rows_to_dicts(cursor):
     cols = [c[0] for c in cursor.description]
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
-
-def test_connection():
+def get_all_data():
+    conn = get_connection()
     try:
-        conn = get_connection()
-        conn.close()
-        return True
-    except Exception as e:
-        print(f"Connection failed: {e}")
-        return False
-
-
-def parse_duration_seconds(run_duration: int) -> int:
-    h = run_duration // 10000
-    m = (run_duration % 10000) // 100
-    s = run_duration % 100
-    return h * 3600 + m * 60 + s
-
-
-def parse_run_datetime(run_date: int, run_time: int) -> datetime:
-    ds = str(run_date)
-    ts = str(run_time).zfill(6)
-    return datetime(int(ds[:4]), int(ds[4:6]), int(ds[6:]),
-                    int(ts[:2]), int(ts[2:4]), int(ts[4:]))
-
-
-def get_all_jobs():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT CONVERT(VARCHAR(36), j.job_id) AS job_id, j.name, j.enabled
-        FROM msdb.dbo.sysjobs j
-        ORDER BY j.name
-    """)
-    rows = rows_to_dicts(cursor)
-    conn.close()
-    return rows
-
-
-def get_running_jobs():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT CONVERT(VARCHAR(36), ja.job_id) AS job_id, j.name,
-               ja.start_execution_date, ja.last_executed_step_id
-        FROM msdb.dbo.sysjobactivity ja
-        JOIN msdb.dbo.sysjobs j ON j.job_id = ja.job_id
-        WHERE ja.session_id = (SELECT MAX(session_id) FROM msdb.dbo.sysjobactivity)
-          AND ja.start_execution_date IS NOT NULL
-          AND ja.stop_execution_date IS NULL
-    """)
-    rows = rows_to_dicts(cursor)
-    conn.close()
-    return rows
-
-
-def get_job_history():
-    conn = get_connection()
-    cursor = conn.cursor()
-    # آخرین 30 اجرا per job — اگه step_id=0 نداشت، آخرین step رو برمیگردونه
-    cursor.execute("""
-        WITH all_hist AS (
+        cur = conn.cursor()
+        cur.execute("""
             SELECT
-                CONVERT(VARCHAR(36), jh.job_id) AS job_id,
+                CONVERT(VARCHAR(36), ja.job_id) AS job_id,
                 j.name,
-                jh.step_id, jh.step_name, jh.run_date, jh.run_time,
-                jh.run_duration, jh.run_status, jh.message,
-                ROW_NUMBER() OVER (
-                    PARTITION BY jh.job_id, CASE WHEN jh.step_id = 0 THEN 0 ELSE 1 END
-                    ORDER BY jh.run_date DESC, jh.run_time DESC
-                ) AS rn
-            FROM msdb.dbo.sysjobhistory jh
-            JOIN msdb.dbo.sysjobs j ON j.job_id = jh.job_id
-        ),
-        has_summary AS (
-            SELECT DISTINCT job_id FROM all_hist WHERE step_id = 0
-        )
-        SELECT job_id, name, step_id, step_name, run_date, run_time,
-               run_duration, run_status, message
-        FROM all_hist h
-        WHERE rn <= 30
-          AND (
-            (h.step_id = 0)
-            OR (h.step_id > 0 AND h.job_id NOT IN (SELECT job_id FROM has_summary))
-          )
-        ORDER BY run_date DESC, run_time DESC
-    """)
-    rows = rows_to_dicts(cursor)
-    conn.close()
-    for r in rows:
-        r["start_dt"] = parse_run_datetime(r["run_date"], r["run_time"])
-        r["duration_seconds"] = parse_duration_seconds(r["run_duration"])
-        r["status_label"] = STATUS_LABELS.get(r["run_status"], "Unknown")
-    return rows
+                ja.start_execution_date AS start_dt
+            FROM msdb.dbo.sysjobactivity ja
+            JOIN msdb.dbo.sysjobs j ON j.job_id = ja.job_id
+            WHERE ja.session_id = (
+                SELECT MAX(session_id) FROM msdb.dbo.sysjobactivity
+            )
+            AND ja.start_execution_date IS NOT NULL
+            AND ja.stop_execution_date IS NULL
+        """)
+        running = rows_to_dicts(cur)
 
+        cur.execute("""
+            WITH all_hist AS (
+                SELECT
+                    CONVERT(VARCHAR(36), jh.job_id) AS job_id,
+                    j.name,
+                    jh.step_id,
+                    jh.step_name,
+                    jh.run_date,
+                    jh.run_time,
+                    jh.run_duration,
+                    jh.run_status,
+                    jh.message,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY jh.job_id,
+                            CASE WHEN jh.step_id = 0 THEN 0 ELSE 1 END
+                        ORDER BY jh.run_date DESC, jh.run_time DESC
+                    ) AS rn
+                FROM msdb.dbo.sysjobhistory jh
+                JOIN msdb.dbo.sysjobs j ON j.job_id = jh.job_id
+            ),
+            has_summary AS (
+                SELECT DISTINCT job_id FROM all_hist WHERE step_id = 0
+            )
+            SELECT job_id, name, step_id, step_name,
+                   run_date, run_time, run_duration, run_status, message
+            FROM all_hist h
+            WHERE rn <= 50
+              AND (
+                (h.step_id = 0)
+                OR (h.step_id > 0 AND h.job_id NOT IN (SELECT job_id FROM has_summary))
+              )
+            ORDER BY run_date DESC, run_time DESC
+        """)
+        history_raw = rows_to_dicts(cur)
+        return running, history_raw
+    finally:
+        conn.close()
 
 def get_step_history(job_id: str):
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT TOP 500
-               jh.step_id, jh.step_name, jh.run_date, jh.run_time,
-               jh.run_duration, jh.run_status, jh.message
-        FROM msdb.dbo.sysjobhistory jh
-        WHERE CONVERT(VARCHAR(36), jh.job_id) = ? AND jh.step_id > 0
-        ORDER BY jh.run_date DESC, jh.run_time DESC
-    """, (job_id,))
-    rows = rows_to_dicts(cursor)
-    conn.close()
-    for r in rows:
-        r["start_dt"] = parse_run_datetime(r["run_date"], r["run_time"])
-        r["duration_seconds"] = parse_duration_seconds(r["run_duration"])
-        r["status_label"] = STATUS_LABELS.get(r["run_status"], "Unknown")
-    return rows
-
-
-if __name__ == "__main__":
-    print("Connected:", test_connection())
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT TOP 200
+                jh.step_id,
+                jh.step_name,
+                jh.run_date,
+                jh.run_time,
+                jh.run_duration,
+                jh.run_status,
+                jh.message
+            FROM msdb.dbo.sysjobhistory jh
+            WHERE CONVERT(VARCHAR(36), jh.job_id) = ?
+              AND jh.step_id > 0
+            ORDER BY jh.run_date DESC, jh.run_time DESC
+        """, job_id)
+        return rows_to_dicts(cur)
+    finally:
+        conn.close()
