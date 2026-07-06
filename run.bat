@@ -8,5 +8,6 @@ if %errorlevel%==0 (
 )
 echo Starting SQL Server Agent Monitor...
 echo Open http://localhost:8050 in your browser
+start "" http://localhost:8050
 %PYTHON_CMD% app.py
 pause

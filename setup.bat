@@ -8,7 +8,7 @@ if %errorlevel%==0 (
     set PYTHON_CMD=python
 )
 %PYTHON_CMD% -m pip install --upgrade pip
-%PYTHON_CMD% -m pip install dash plotly pyodbc
+%PYTHON_CMD% -m pip install -r requirements.txt
 echo.
 echo Setup complete. Run run.bat to start.
 pause
