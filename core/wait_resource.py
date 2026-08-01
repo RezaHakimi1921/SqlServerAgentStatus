@@ -14,8 +14,37 @@ _KEY_RE = re.compile(r"^KEY:\s*(\d+):(\d+)", re.IGNORECASE)
 _PAGE_RE = re.compile(r"^PAGE:\s*(\d+):(\d+):(\d+)", re.IGNORECASE)
 _RID_RE = re.compile(r"^RID:\s*(\d+):(\d+):(\d+):(\d+)", re.IGNORECASE)
 _RAW_RESOURCE_RE = re.compile(r"^(OBJECT|KEY|PAGE|RID):", re.IGNORECASE)
+_DISPLAY_SUFFIX_RE = re.compile(r"\s+\([^)]*\)\s*$")
 
 DbExecutor = Callable[[int, List[Dict[str, Any]]], Dict[str, Optional[str]]]
+
+
+def format_wait_resource_display(raw: str | None, wait_object: str | None) -> str:
+    """Return a UI-only object label or compact, humanized raw resource."""
+    resolved = (wait_object or "").strip()
+    if resolved:
+        return resolved
+
+    text = " ".join((raw or "").strip().split())
+    if not text:
+        return "—"
+
+    text = _DISPLAY_SUFFIX_RE.sub("", text)
+    parsed = parse_wait_resource(text)
+    if parsed:
+        kind = parsed["kind"].upper()
+        if kind == "OBJECT":
+            return f"OBJECT {parsed['db_id']}:{parsed['object_id']}"
+        if kind == "KEY":
+            return f"KEY {parsed['db_id']}:{parsed['hobt_id']}"
+        if kind == "PAGE":
+            return f"PAGE {parsed['db_id']}:{parsed['file_id']}:{parsed['page_id']}"
+        return (
+            f"RID {parsed['db_id']}:{parsed['file_id']}:"
+            f"{parsed['page_id']}:{parsed['slot_id']}"
+        )
+
+    return re.sub(r"^([A-Za-z_]+):\s*", r"\1 ", text)
 
 
 def parse_wait_resource(wait_resource: str | None) -> dict | None:

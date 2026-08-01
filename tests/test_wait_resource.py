@@ -1,5 +1,6 @@
 """Unit tests for wait_resource parse + batch resolve helpers."""
 from core.wait_resource import (
+    format_wait_resource_display,
     parse_wait_resource,
     resolve_wait_object,
     resolve_wait_objects_batch,
@@ -41,6 +42,17 @@ def test_parse_unknown_returns_none():
     assert parse_wait_resource("UNKNOWN: foo") is None
     assert parse_wait_resource("") is None
     assert parse_wait_resource(None) is None
+
+
+def test_format_wait_resource_display_prefers_object_and_humanizes_raw():
+    assert format_wait_resource_display(
+        "KEY: 7:72057594039926784 (abcd1234)", " dbo.Orders "
+    ) == "dbo.Orders"
+    assert format_wait_resource_display(
+        "KEY: 7:72057594039926784 (abcd1234)", None
+    ) == "KEY 7:72057594039926784"
+    assert format_wait_resource_display("OBJECT: 5:688773561:0", None) == "OBJECT 5:688773561"
+    assert format_wait_resource_display("", None) == "—"
 
 
 def test_resolve_returns_none_on_unknown():
