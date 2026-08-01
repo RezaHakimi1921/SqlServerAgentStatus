@@ -178,9 +178,10 @@ def resolve_wait_object(
 def resolve_wait_objects_batch(
     items: List[Tuple[str, str | None]],
     *,
-    executor: DbExecutor,
+    executor: DbExecutor | None = None,
 ) -> Dict[str, str | None]:
     """Batch resolve unique wait_resource keys, one executor call per distinct db_id."""
+    exec_fn = executor or _default_db_executor
     unique: Dict[str, str | None] = {}
     for resource, wait_type in items:
         key = (resource or "").strip()
@@ -200,7 +201,7 @@ def resolve_wait_objects_batch(
 
     for db_id, specs in by_db.items():
         try:
-            db_results = executor(db_id, specs)
+            db_results = exec_fn(db_id, specs)
             for spec in specs:
                 resource = spec["resource"]
                 value = db_results.get(resource)
