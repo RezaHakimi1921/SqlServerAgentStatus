@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-01  
 **Status:** DONE  
-**Commit:** (see git log) — feat: enrich blocking fetch with trees and wait_object
+**Commit:** `d59b7ea` — feat: enrich blocking fetch with trees and wait_object
 
 ---
 

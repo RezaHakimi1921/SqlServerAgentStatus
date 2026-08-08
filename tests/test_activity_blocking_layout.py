@@ -73,5 +73,5 @@ def test_blocking_table_renders_tree_and_collapses_children_after_two():
     assert "blk-tree" in classes
     assert "Details" in tags
     assert "login-100 — head blocker" in text
-    assert "+ 1 session دیگر under this root" in text
+    assert "+ 1 more sessions" in text
     assert text.count("login-201") == 1

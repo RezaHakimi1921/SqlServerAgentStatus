@@ -1,0 +1,37 @@
+---
+description: SQL Server monitor objects must live in insight schema with USP_Insight_ naming
+globs: "**/*.{sql,py,md}"
+alwaysApply: true
+---
+
+# Database objects — `insight` schema
+
+All SqlMonitor / SmartMonitor persistence objects (tables, views, procedures, functions) that the app owns must be created in the **`insight`** schema — never `dbo` (except temporary/demo scripts that explicitly say otherwise).
+
+## Schema
+
+```sql
+IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'insight')
+    EXEC(N'CREATE SCHEMA insight');
+```
+
+## Naming
+
+| Object | Pattern | Example |
+|--------|---------|---------|
+| Tables | `insight.<snake_or_domain_name>` | `insight.metric_samples`, `insight.IdxCat_Table` |
+| Procedures | `insight.USP_Insight_<Area>_<Action>` | `insight.USP_Insight_IndexCatalog_Refresh` |
+| Constraints / indexes | Prefer `PK_insight_…`, `IX_insight_…`, `DF_insight_…` | |
+
+## Rules
+
+1. New SQL under `scripts/sql/`, `phase2/queries/`, or provider helpers must target **`insight.*`**.
+2. Procedure names start with **`USP_Insight_`** (schema still `insight`).
+3. App code that probes catalog objects must look for `schema = insight` (not `dbo`).
+4. Grants for the app login must be on `insight.<object>`.
+5. Soft-fail if objects are missing — do not require catalog for core UI.
+
+## Related scripts
+
+- Metric store: `phase2/queries/insight-metric-store.sql`
+- Index catalog: `scripts/sql/SqlMonitor_IndexCatalog.sql`

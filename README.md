@@ -1,132 +1,43 @@
-# SQL Server Agent Monitor
+خیلی هم عالی! لحن صمیمی و «خودمونی» توی لینکدین خیلی وقت‌ها بهتر جواب می‌ده و باعث می‌شه آدم‌ها بیشتر با پست تعامل داشته باشن.
 
-A lightweight web dashboard to monitor **SQL Server Agent Jobs** — running jobs, completed runs, Gantt timeline, and step-level details.
+اینم چند تا پیشنهاد کپشن با همون لحنی که دوست داری:
 
----
+### گزینه ۱: کوتاه و ضربتی (مشابه نمونه خودت)
 
-## Quick Start (Windows)
+از نظارت دستی و چک کردن مدام جاب‌های SQL Server خسته شدی؟ 😫
+بیا اینجا که برات یه ابزار رایگان و باحال ساختم! 😉
 
-### Prerequisites
+اسمش رو گذاشتم **SQL Server Agent Monitor**. یه داشبورد وب خیلی سبک که قشنگ بهت نشون می‌ده کدوم جاب داره اجرا می‌شه، کدوم تموم شده و حتی با نمودار گانت (Gantt) بهت می‌گه امروز چه خبر بوده.
 
-See **[INSTALL.md](INSTALL.md)** for full step-by-step setup on a **fresh PC** (Python, ODBC, SQL permissions).
-
-| Component | Required |
-|-----------|----------|
-| Python 3.9+ (64-bit) | Yes — [python.org](https://www.python.org/downloads/) |
-| ODBC Driver 17 or 18 | Yes — [Microsoft download](https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server) |
-| SQL login (SELECT on `msdb`) | Yes |
-
-> **Common issue:** *"Python was not found… Microsoft Store"* → install Python, disable **App execution aliases** for `python.exe`, then run `setup.bat` again. Details in [INSTALL.md](INSTALL.md).
-
-### Install & Run
-
-```bat
-setup.bat    REM install dependencies (first time only)
-run.bat      REM starts the app and opens the browser
-```
-
-On **first run**, a setup wizard asks for Server, User, and Password. The password is stored in **Windows Credential Manager** (not in `.env`). Server settings are in `.env` (never committed to git).
-
-**Security:** The app binds to `127.0.0.1` by default (local access only). Connection settings can only be changed from the same machine. Gantt and all views use the same read-only SQL connection — credentials never reach the browser.
+دیگه لازم نیست توی محیط Management Studio غرق بشی، همه‌چی رو توی مرورگرت داشته باش! 🚀
 
 ---
 
-## Features
+### گزینه ۲: کمی مفصل‌تر (توضیح امکانات با لحن دوستانه)
 
-| Tab | Description |
-|-----|-------------|
-| ⚡ Running | Live jobs with progress estimate and slow-job detection |
-| 📋 All Jobs | Latest run per job, filter by date |
-| 📊 Gantt | Timeline of today's job executions |
-| 🔍 Details | Step-level history for a selected job |
+همیشه دنبال یه راه راحت‌تر برای چک کردن جاب‌های SQL بودم که هم خوش‌گل باشه و هم سریع... آخرش دیدم خودم بسازمش بهتره! 😎
 
----
+این شما و این **SQL Server Agent Monitor**!
+یه ابزار کاملاً رایگان که با پایتون و Dash نوشتم تا زندگی رو برای DBAها و توسعه‌دهنده‌ها راحت‌تر کنم.
 
-## Configuration
+**چیکار می‌کنه؟**
+✅ جاب‌های در حال اجرا رو زنده (Live) نشون می‌ده.
+✅ اگه جابی کند پیش بره، سریع بهت می‌گه.
+✅ یه نمودار گانت (Gantt) خوش‌گل داره برای کل جاب‌های امروز.
+✅ جزئیات هر Step رو هم مو به مو بهت می‌ده.
 
-Settings are stored in `.env` (auto-created by the setup wizard):
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SQL_SERVER` | — | Server name or `HOST\INSTANCE` |
-| `SQL_DATABASE` | `msdb` | Database (keep as msdb) |
-| `SQL_USER` | — | SQL login |
-| *(password)* | — | Stored in Windows Credential Manager |
-| `SQL_DRIVER` | `17` | ODBC driver version (17 or 18) |
-| `DASH_HOST` | `127.0.0.1` | Bind address (local only by default) |
-| `REFRESH_RUNNING` | `15000` | Running jobs refresh (ms) |
-| `REFRESH_HISTORY` | `60000` | History refresh (ms) |
-| `DASH_PORT` | `8050` | Web UI port |
-
-Use **تغییر اتصال** (Change Connection) in the header to reconfigure.
+راه‌اندازیش هم کلاً دو تا کلیکه! نصبش کن و حالشو ببر. اگه سوالی داشتی یا خواستی توسعه‌ش بدی، من در خدمتم. 👇
 
 ---
 
-## Tech Stack
+### پیشنهاد برای عکس‌ها (تصویری که مخاطب رو جذب کنه)
 
-- Python · Dash · Plotly · pyodbc
+1.  **عکس اول (کاور):** یه اسکرین‌شات از بخش **Gantt Chart**. چون رنگی‌رنگی و گرافیکیه، توی فید لینکدین خیلی جلب توجه می‌کنه.
+2.  **عکس دوم:** یه اسکرین‌شات از لیست جاب‌های در حال اجرا (⚡ Running) که نشون بده چقدر تمیز و مرتب اطلاعات رو نمایش می‌ده.
+3.  **یه ویدیوی کوتاه (اگه بتونی ضبط کنی):** یه اسکرین‌رکورد ۵ ثانیه‌ای که داری بین تب‌ها جابه‌جا می‌شی. این عالیه!
 
----
+### هشتگ‌های پیشنهادی:
 
----
+#دیتابیس #برنامه_نویسی #پایتون #رایگان #ابزار_کاربردی #SQLServer #DBA #Python #Dashboard #OpenSource #SQLAgent #نرم_افزار
 
-# مانیتور SQL Server Agent
-
-داشبورد وب سبک برای مشاهده وضعیت **جاب‌های SQL Server Agent** — در حال اجرا، تمام‌شده، Gantt و جزئیات Step.
-
----
-
-## شروع سریع (ویندوز)
-
-### پیش‌نیاز
-
-راهنمای کامل نصب از صفر: **[INSTALL.md](INSTALL.md)**
-
-| مورد | الزامی |
-|------|--------|
-| Python 3.9+ | بله |
-| ODBC Driver 17 یا 18 | بله |
-| SQL Login با SELECT روی msdb | بله |
-
-> اگر پیام *Python was not found* دیدید → Python نصب کنید، alias فروشگاه ویندوز را خاموش کنید، `setup.bat` را دوباره اجرا کنید.
-
-### نصب و اجرا
-
-```bat
-setup.bat    REM نصب پکیج‌ها (فقط بار اول)
-run.bat      REM اجرا + باز کردن مرورگر
-```
-
-در **اولین اجرا**، فرم Setup از شما Server، User و Password می‌گیرد. **رمز عبور** در Windows Credential Manager ذخیره می‌شود (نه در `.env`).
-
-**امنیت:** پیش‌فرض فقط از `127.0.0.1` در دسترس است. تنظیمات اتصال فقط از همان رایانه قابل تغییر است. Gantt و همه بخش‌ها از همان اتصال SQL استفاده می‌کنند — رمز هرگز به مرورگر ارسال نمی‌شود.
-
----
-
-## امکانات
-
-| تب | توضیح |
-|----|-------|
-| ⚡ در حال اجرا | جاب‌های live + تخمین پیشرفت |
-| 📋 همه جاب‌ها | آخرین اجرای هر جاب + فیلتر تاریخ |
-| 📊 Gantt | timeline اجراهای امروز |
-| 🔍 جزئیات | تاریخچه step-level |
-
----
-
-## تنظیمات
-
-| متغیر | پیش‌فرض | توضیح |
-|-------|---------|-------|
-| `SQL_SERVER` | — | نام سرور |
-| `SQL_USER` | — | نام کاربری |
-| *(رمز)* | — | Windows Credential Manager |
-| `DASH_HOST` | `127.0.0.1` | فقط دسترسی محلی |
-| `REFRESH_RUNNING` | `15000` | بروزرسانی جاب‌های در حال اجرا (ms) |
-| `REFRESH_HISTORY` | `60000` | بروزرسانی تاریخچه (ms) |
-
----
-
-## License
-
-MIT — contributions welcome.
+هر کدوم از این‌ها رو که بیشتر دوست داشتی بردار و اگه خواستی لینک گیت‌هاب یا فایل نصب رو هم آخرش بذار. موفق باشی! ✌️⚡️

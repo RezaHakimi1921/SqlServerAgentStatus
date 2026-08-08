@@ -57,6 +57,18 @@ def enrich_blocking_result(result: dict, *, executor=None) -> dict:
 
     _attach_wait_objects_to_trees(trees, amap)
 
+    with_res = sum(1 for _k, v in (amap or {}).items())
+    resolved_n = sum(1 for v in (amap or {}).values() if v)
+    meta = dict(result.get("meta") or {})
+    if with_res and resolved_n == 0:
+        meta["resolve_hint"] = (
+            "Object names unresolved — grant VIEW ANY DEFINITION to the monitor login "
+            "(and CONNECT on databases for KEY locks). Falling back to humanized wait_resource."
+        )
+    elif with_res:
+        meta["resolve_hint"] = None
+    result["meta"] = meta
+
     old_summary = dict(result.get("summary") or {})
     result["summary"] = {**old_summary, **summarize_blocking_trees(trees)}
     result["trees"] = trees
@@ -72,3 +84,7 @@ def fetch_blocking(top: int = 200) -> dict:
 
 def fetch_session_by_id(session_id) -> dict:
     return get_provider().get_session_by_id(session_id).to_dict()
+
+
+def fetch_server_resource_pulse() -> dict:
+    return get_provider().get_server_resource_pulse().to_dict()

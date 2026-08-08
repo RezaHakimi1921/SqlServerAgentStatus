@@ -1,0 +1,7 @@
+# Phase 2 project law (Wave 0 / Wave 1)
+#
+# Build the SQL Server Monitor first. Design the Monitoring Platform later.
+#
+# In Wave 0 and Wave 1, no feature outside SQL Server Activity Core is implemented.
+# Only extension points are defined (no Azure/Postgres providers, no real alerts,
+# no timeline store, no snapshot compare).

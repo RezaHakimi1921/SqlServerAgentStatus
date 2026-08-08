@@ -72,12 +72,33 @@ def test_blast_dedupe_across_roots():
 
 def test_summarize_chain_age_max():
     rows = [
-        _edge(1, 10, head=1, elapsed=100),
-        _edge(2, 20, head=1, elapsed=200),
+        _edge(1, 10, head=1, elapsed=100, wait_ms=1000),
+        _edge(2, 20, head=1, elapsed=200, wait_ms=5000),
     ]
     trees = build_blocking_trees(rows)
     summary = summarize_blocking_trees(trees)
     assert summary["chain_age_sec"] == 200
+    assert summary["longest_wait_ms"] == 5000
+    # Same blast → longer wait first
+    assert trees[0]["head_session_id"] == 2
+
+
+def test_head_carries_host_and_open_tran():
+    rows = [
+        _edge(
+            1, 2, head=1,
+            blocker_host="APP01",
+            blocker_program="MyApp",
+            database_name="Sales",
+            blocker_open_tran=3,
+        ),
+    ]
+    trees = build_blocking_trees(rows)
+    head = trees[0]["head"]
+    assert head["host"] == "APP01"
+    assert head["program"] == "MyApp"
+    assert head["database_name"] == "Sales"
+    assert head["open_tran"] == 3
 
 
 def test_dedupes_identical_edges():

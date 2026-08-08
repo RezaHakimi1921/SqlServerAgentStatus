@@ -5,10 +5,11 @@ import pyodbc
 from config import build_conn_str, is_configured, load_config
 
 HISTORY_DAYS = 1
+FAILURE_LOOKBACK_DAYS = 7  # job errors / notifications / latest outcome status
 STATS_RUNS_PER_JOB = 5
 GANTT_RUNS_PER_JOB = 24
 _BATCH_CACHE = {"ts": 0.0, "data": None}
-_BATCH_CACHE_TTL = 8
+_BATCH_CACHE_TTL = 20
 
 
 def get_connection(config=None):
@@ -92,7 +93,7 @@ def get_dashboard_batch(use_cache=True):
             )
             SELECT job_id, name, run_date, run_time, run_duration, run_status
             FROM latest WHERE rn = 1
-        """, -HISTORY_DAYS)
+        """, -FAILURE_LOOKBACK_DAYS)
         latest_runs = rows_to_dicts(cur)
         for r in latest_runs:
             r["duration_seconds"] = _duration_seconds(r.get("run_duration"))
@@ -150,20 +151,6 @@ def get_dashboard_batch(use_cache=True):
             r["duration_seconds"] = _duration_seconds(r.get("run_duration"))
 
         cur.execute("""
-            DECLARE @today INT = CONVERT(INT, CONVERT(VARCHAR(8), GETDATE(), 112));
-            SELECT TOP 50
-                CONVERT(VARCHAR(36), jh.job_id) AS job_id,
-                j.name, jh.step_id, jh.step_name,
-                LEFT(jh.message, 500) AS message,
-                jh.run_date, jh.run_time
-            FROM msdb.dbo.sysjobhistory jh
-            INNER JOIN msdb.dbo.sysjobs j ON j.job_id = jh.job_id
-            WHERE jh.run_status = 0 AND jh.run_date = @today AND jh.step_id > 0
-            ORDER BY jh.run_date DESC, jh.run_time DESC
-        """)
-        today_failures = rows_to_dicts(cur)
-
-        cur.execute("""
             DECLARE @since INT = CONVERT(
                 INT, CONVERT(VARCHAR(8), DATEADD(day, ?, GETDATE()), 112)
             );
@@ -183,10 +170,34 @@ def get_dashboard_batch(use_cache=True):
             )
             SELECT job_id, name, step_name, message, run_date, run_time
             FROM fails WHERE rn = 1
-        """, -HISTORY_DAYS)
+        """, -FAILURE_LOOKBACK_DAYS)
         latest_failures = rows_to_dicts(cur)
 
-        result = (latest_runs, all_jobs, job_stats, today_runs, today_failures, latest_failures)
+        # Recent step failures for the notification panel (not only today)
+        cur.execute("""
+            DECLARE @since INT = CONVERT(
+                INT, CONVERT(VARCHAR(8), DATEADD(day, ?, GETDATE()), 112)
+            );
+            SELECT TOP 120
+                CONVERT(VARCHAR(36), jh.job_id) AS job_id,
+                j.name, jh.step_id, jh.step_name,
+                LEFT(jh.message, 500) AS message,
+                jh.run_date, jh.run_time
+            FROM msdb.dbo.sysjobhistory jh
+            INNER JOIN msdb.dbo.sysjobs j ON j.job_id = jh.job_id
+            WHERE jh.run_status = 0 AND jh.step_id > 0 AND jh.run_date >= @since
+            ORDER BY jh.run_date DESC, jh.run_time DESC
+        """, -FAILURE_LOOKBACK_DAYS)
+        recent_failures = rows_to_dicts(cur)
+
+        result = (
+            latest_runs,
+            all_jobs,
+            job_stats,
+            today_runs,
+            recent_failures,
+            latest_failures,
+        )
         _BATCH_CACHE["ts"] = now
         _BATCH_CACHE["data"] = result
         return result
@@ -197,6 +208,101 @@ def get_dashboard_batch(use_cache=True):
 def invalidate_batch_cache():
     _BATCH_CACHE["ts"] = 0.0
     _BATCH_CACHE["data"] = None
+
+
+def get_jobs_lite():
+    """Fast open path: jobs list + recent failures + recent outcomes + today gantt runs.
+
+    Avoids multi-day stats averages (those load in background via get_dashboard_batch).
+    """
+    if not is_configured():
+        raise RuntimeError("SQL Server connection is not configured.")
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT CONVERT(VARCHAR(36), job_id) AS job_id, name, enabled
+            FROM msdb.dbo.sysjobs ORDER BY name
+        """)
+        all_jobs = rows_to_dicts(cur)
+        for r in all_jobs:
+            r["enabled"] = bool(r["enabled"])
+
+        # Latest outcome per job over lookback (so yesterday's failures still show)
+        cur.execute("""
+            DECLARE @since INT = CONVERT(
+                INT, CONVERT(VARCHAR(8), DATEADD(day, ?, GETDATE()), 112)
+            );
+            WITH latest AS (
+                SELECT
+                    CONVERT(VARCHAR(36), jh.job_id) AS job_id,
+                    j.name,
+                    jh.run_date, jh.run_time, jh.run_duration, jh.run_status,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY jh.job_id
+                        ORDER BY jh.run_date DESC, jh.run_time DESC
+                    ) AS rn
+                FROM msdb.dbo.sysjobhistory jh
+                INNER JOIN msdb.dbo.sysjobs j ON j.job_id = jh.job_id
+                WHERE jh.step_id = 0 AND jh.run_date >= @since
+            )
+            SELECT job_id, name, run_date, run_time, run_duration, run_status
+            FROM latest WHERE rn = 1
+        """, -FAILURE_LOOKBACK_DAYS)
+        latest_outcomes = rows_to_dicts(cur)
+        for r in latest_outcomes:
+            r["duration_seconds"] = _duration_seconds(r.get("run_duration"))
+
+        cur.execute("""
+            DECLARE @today INT = CONVERT(INT, CONVERT(VARCHAR(8), GETDATE(), 112));
+            WITH today_r AS (
+                SELECT
+                    CONVERT(VARCHAR(36), jh.job_id) AS job_id,
+                    j.name,
+                    jh.run_date, jh.run_time, jh.run_duration, jh.run_status,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY jh.job_id ORDER BY jh.run_time DESC
+                    ) AS rn
+                FROM msdb.dbo.sysjobhistory jh
+                INNER JOIN msdb.dbo.sysjobs j ON j.job_id = jh.job_id
+                WHERE jh.step_id = 0 AND jh.run_date = @today
+            )
+            SELECT job_id, name, run_date, run_time, run_duration, run_status
+            FROM today_r WHERE rn <= ?
+            ORDER BY name, run_time
+        """, GANTT_RUNS_PER_JOB)
+        today_runs = rows_to_dicts(cur)
+        for r in today_runs:
+            r["duration_seconds"] = _duration_seconds(r.get("run_duration"))
+
+        cur.execute("""
+            DECLARE @since INT = CONVERT(
+                INT, CONVERT(VARCHAR(8), DATEADD(day, ?, GETDATE()), 112)
+            );
+            SELECT TOP 120
+                CONVERT(VARCHAR(36), jh.job_id) AS job_id,
+                j.name, jh.step_id, jh.step_name,
+                LEFT(jh.message, 500) AS message,
+                jh.run_date, jh.run_time
+            FROM msdb.dbo.sysjobhistory jh
+            INNER JOIN msdb.dbo.sysjobs j ON j.job_id = jh.job_id
+            WHERE jh.run_status = 0 AND jh.step_id > 0 AND jh.run_date >= @since
+            ORDER BY jh.run_date DESC, jh.run_time DESC
+        """, -FAILURE_LOOKBACK_DAYS)
+        recent_failures = rows_to_dicts(cur)
+
+        # One latest failure row per job (for overview error details)
+        latest_fail_map = {}
+        latest_failures = []
+        for f in recent_failures:
+            jid = f.get("job_id")
+            if jid and jid not in latest_fail_map:
+                latest_fail_map[jid] = f
+                latest_failures.append(f)
+
+        return all_jobs, recent_failures, latest_outcomes, today_runs, latest_failures
+    finally:
+        conn.close()
 
 
 def get_job_history(days=HISTORY_DAYS, per_job=STATS_RUNS_PER_JOB):

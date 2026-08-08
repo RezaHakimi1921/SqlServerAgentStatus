@@ -91,6 +91,7 @@ def load_config():
         "encrypt": os.getenv("SQL_ENCRYPT", "no").strip(),
         "trust_cert": os.getenv("SQL_TRUST_CERT", "yes").strip(),
         "refresh_minutes": refresh_minutes,
+        "monitor_database": os.getenv("MONITOR_DATABASE", "SmartMonitorDB").strip() or "SmartMonitorDB",
     }
 
 

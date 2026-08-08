@@ -1,0 +1,19 @@
+---
+description: Do not require or deploy Extended Events without explicit user approval
+alwaysApply: true
+---
+
+# No Extended Events (unless user opts in)
+
+The user **cannot / will not** grant Extended Events create/alter rights on production right now — sensitive data must not be captured by XE sessions.
+
+## Rules
+
+- Do **not** assume `SqlMonitor_PrintMessages` (or any new XE session) will be installed.
+- Do **not** block features on XE; soft-fail and use DMV-only alternatives.
+- Do **not** add new XE sessions, traces, or audits that capture SQL text / PRINT / parameters without explicit user approval in that conversation.
+- When a future feature truly needs XE, **tell the user first** with: what would be captured, why, and a non-XE alternative if one exists.
+
+## Already deferred (needs XE or app-side substitute)
+
+- Live PRINT / RAISERROR message history in Session Lookup (`FACTURE: Updated N rows` style).

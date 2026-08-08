@@ -1,0 +1,16 @@
+"""Tables & Growth constants."""
+
+TABLES_TOP_N = 50
+TABLES_GROWERS_N = 25
+TABLES_DB_ROLLUP_CAP = 100
+TABLES_LIVE_DB_CAP = 15
+TABLES_LIVE_DB_TIMEOUT_SEC = 8
+TABLES_QUERY_TIMEOUT_SEC = 20
+
+# insight schema objects (sibling to IdxCat — not a unified catalog)
+TABLES_HISTORY_SCHEMA = "insight"
+TABLES_HISTORY_TABLE = "ObjSize_History"
+TABLES_HISTORY_CAPTURE_PROC = "USP_Insight_ObjSize_Capture"
+TABLES_HISTORY_RETENTION_DAYS = 90
+
+TABLES_DELTA_WINDOWS_DAYS = (1, 7, 30)

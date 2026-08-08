@@ -1,0 +1,24 @@
+---
+description: Status toasts top-right; Loading for slow fetches
+alwaysApply: true
+---
+
+# UI alerts / status messages
+
+Transient status messages (refreshing, paused, errors, copy feedback) must appear as **compact toast alerts at the very top-right of the viewport** (`position: fixed; top: 16px; right: 16px; z-index` high).
+
+## Toast rules
+
+- Put the toast stack on the **app root layout**, never inside an animated `.module-panel` (CSS `animation`/`transform` traps `position: fixed`).
+- Short text + optional spinner; **auto-dismiss when the state ends** (e.g. hide Refresh toast as soon as data stores update).
+- Do **not** show Refresh toast on every auto-interval tick — only on manual Refresh (or equivalent user action).
+- Persistent states (Pause) stay until Resume — still as a top-right toast, not a full-width bar.
+- Never use full-width status banners for routine refresh/pause messaging.
+
+## Loading for slow / fetched views
+
+Whenever the user opens a view/tab/page that must **fetch data and may take noticeable time**, show a **centered Loading** state in that content area immediately (spinner + short label), then replace it when data arrives.
+
+Examples: Gantt, Activity tab switches, job detail modal, Session Lookup.
+
+Do not leave a blank/black content area while waiting.

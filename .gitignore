@@ -3,3 +3,10 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
+logs/
+snapshots/
+
+.pytest_cache/
+~*.bak*
+*.saved.bak*
+

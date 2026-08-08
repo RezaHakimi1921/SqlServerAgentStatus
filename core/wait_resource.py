@@ -34,7 +34,7 @@ def format_wait_resource_display(raw: str | None, wait_object: str | None) -> st
     if parsed:
         kind = parsed["kind"].upper()
         if kind == "OBJECT":
-            return f"OBJECT {parsed['db_id']}:{parsed['object_id']}"
+            return f"{parsed['db_id']}:{parsed['object_id']}"
         if kind == "KEY":
             return f"KEY {parsed['db_id']}:{parsed['hobt_id']}"
         if kind == "PAGE":
@@ -113,7 +113,12 @@ def _validate_schema_table(value: Any, *, raw_resource: str | None = None) -> st
 
 
 def _default_db_executor(db_id: int, specs: List[Dict[str, Any]]) -> Dict[str, Optional[str]]:
-    """One batched SQL round-trip per db_id for OBJECT and KEY resources."""
+    """One batched SQL round-trip per db_id for OBJECT and KEY resources.
+
+    Requires VIEW ANY DEFINITION (or CONNECT + VIEW DEFINITION on each DB)
+    for OBJECT_NAME / schema resolution. Without it, OBJECT_NAME returns NULL
+    and we leave wait_object as None (UI falls back to humanized raw).
+    """
     from core.connection import connect
 
     results: Dict[str, Optional[str]] = {s["resource"]: None for s in specs}
@@ -128,48 +133,74 @@ def _default_db_executor(db_id: int, specs: List[Dict[str, Any]]) -> Dict[str, O
         cur = conn.cursor()
 
         if objects:
-            values = ", ".join(f"({int(s['object_id'])})" for s in objects)
-            sql = f"""
-                SELECT v.object_id,
-                       OBJECT_SCHEMA_NAME(v.object_id, ?) + N'.' + OBJECT_NAME(v.object_id, ?) AS full_name
-                FROM (VALUES {values}) AS v(object_id)
-            """
-            cur.execute(sql, (db_id, db_id))
-            oid_map: Dict[int, str] = {}
-            for row in cur.fetchall():
-                oid, full_name = row[0], row[1]
-                validated = _validate_schema_table(full_name)
-                if validated:
-                    oid_map[int(oid)] = validated
-            for s in objects:
-                resolved = oid_map.get(int(s["object_id"]))
-                if resolved:
-                    results[s["resource"]] = resolved
+            try:
+                values = ", ".join(f"({int(s['object_id'])})" for s in objects)
+                sql = f"""
+                    SELECT v.object_id,
+                           OBJECT_SCHEMA_NAME(v.object_id, ?) + N'.' + OBJECT_NAME(v.object_id, ?) AS full_name
+                    FROM (VALUES {values}) AS v(object_id)
+                """
+                cur.execute(sql, (db_id, db_id))
+                oid_map: Dict[int, str] = {}
+                null_hits = 0
+                for row in cur.fetchall():
+                    oid, full_name = row[0], row[1]
+                    validated = _validate_schema_table(full_name)
+                    if validated:
+                        oid_map[int(oid)] = validated
+                    else:
+                        null_hits += 1
+                for s in objects:
+                    resolved = oid_map.get(int(s["object_id"]))
+                    if resolved:
+                        results[s["resource"]] = resolved
+                if null_hits and not oid_map:
+                    logger.warning(
+                        "OBJECT_NAME returned NULL for all %s object(s) in db_id=%s — "
+                        "grant VIEW ANY DEFINITION (or CONNECT+VIEW DEFINITION on that DB) "
+                        "to the monitor login",
+                        null_hits,
+                        db_id,
+                    )
+            except Exception:
+                logger.exception("OBJECT resolve failed for db_id=%s", db_id)
 
         if keys:
-            db_name_row = cur.execute("SELECT DB_NAME(?)", (db_id,)).fetchone()
-            db_name = db_name_row[0] if db_name_row else None
-            if not db_name:
-                return results
-
-            hobt_values = ", ".join(f"({int(s['hobt_id'])})" for s in keys)
-            sql = f"""
-                SELECT p.hobt_id,
-                       OBJECT_SCHEMA_NAME(p.object_id, ?) + N'.' + OBJECT_NAME(p.object_id, ?) AS full_name
-                FROM { _quote_db(db_name) }.sys.partitions AS p
-                INNER JOIN (VALUES {hobt_values}) AS v(hobt_id) ON p.hobt_id = v.hobt_id
-            """
-            cur.execute(sql, (db_id, db_id))
-            hobt_map: Dict[int, str] = {}
-            for row in cur.fetchall():
-                hobt_id, full_name = row[0], row[1]
-                validated = _validate_schema_table(full_name)
-                if validated:
-                    hobt_map[int(hobt_id)] = validated
-            for s in keys:
-                resolved = hobt_map.get(int(s["hobt_id"]))
-                if resolved:
-                    results[s["resource"]] = resolved
+            try:
+                db_name_row = cur.execute("SELECT DB_NAME(?)", (db_id,)).fetchone()
+                db_name = db_name_row[0] if db_name_row else None
+                if not db_name:
+                    logger.warning("DB_NAME(%s) returned NULL — cannot resolve KEY locks", db_id)
+                else:
+                    hobt_values = ", ".join(f"({int(s['hobt_id'])})" for s in keys)
+                    sql = f"""
+                        SELECT p.hobt_id,
+                               OBJECT_SCHEMA_NAME(p.object_id, ?) + N'.' + OBJECT_NAME(p.object_id, ?) AS full_name
+                        FROM { _quote_db(db_name) }.sys.partitions AS p
+                        INNER JOIN (VALUES {hobt_values}) AS v(hobt_id) ON p.hobt_id = v.hobt_id
+                    """
+                    cur.execute(sql, (db_id, db_id))
+                    hobt_map: Dict[int, str] = {}
+                    for row in cur.fetchall():
+                        hobt_id, full_name = row[0], row[1]
+                        validated = _validate_schema_table(full_name)
+                        if validated:
+                            hobt_map[int(hobt_id)] = validated
+                    for s in keys:
+                        resolved = hobt_map.get(int(s["hobt_id"]))
+                        if resolved:
+                            results[s["resource"]] = resolved
+            except Exception as ex:
+                # 916 = cannot access database under current security context
+                msg = str(ex)
+                if "916" in msg or "not able to access the database" in msg.lower():
+                    logger.warning(
+                        "KEY resolve skipped for db_id=%s — login cannot CONNECT to that database (%s)",
+                        db_id,
+                        msg.split("]")[-1].strip()[:160],
+                    )
+                else:
+                    logger.exception("KEY resolve failed for db_id=%s", db_id)
     finally:
         conn.close()
 

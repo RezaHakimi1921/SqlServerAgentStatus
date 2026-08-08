@@ -1,0 +1,27 @@
+---
+description: Use GETDATE() for wall-clock timestamps in SQL — never SYSUTCDATETIME()
+globs: "**/*.{sql,py}"
+alwaysApply: true
+---
+
+# SQL timestamps — `GETDATE()` only
+
+Do **not** use `SYSUTCDATETIME()`, `SYSUTCDATETIME`, or `GETUTCDATE()` for application / catalog timestamps in this project.
+
+## Use
+
+```sql
+GETDATE()
+```
+
+## Why
+
+- Operators and the UI expect **server local time** (same clock as SQL Agent jobs and day-to-day DBA work).
+- Mixing UTC (`SYSUTCDATETIME`) with local displays causes confusing “last refresh” times and collation/timezone mismatches in reports.
+
+## Rules
+
+1. Defaults on datetime columns: `DEFAULT (GETDATE())` — not `SYSUTCDATETIME()`.
+2. Proc / script writes (`refreshed_at`, `started_at`, `finished_at`, log rows): assign `GETDATE()`.
+3. Python that emits T-SQL strings for this app must follow the same rule.
+4. If an existing script still has `SYSUTCDATETIME()`, replace it when you touch that file.

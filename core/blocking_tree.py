@@ -33,6 +33,10 @@ def _head_node(session_id: int, edge: dict) -> dict:
     return {
         "session_id": session_id,
         "login": edge.get("blocker_login") or "—",
+        "host": edge.get("blocker_host") or "",
+        "program": edge.get("blocker_program") or "",
+        "database_name": edge.get("database_name") or "",
+        "open_tran": _safe_int(edge.get("blocker_open_tran")) or 0,
         "sql_snippet": edge.get("blocker_sql") or "",
         "command": edge.get("blocker_command") or "",
         "request_elapsed_sec": _safe_int(edge.get("request_elapsed_sec")),
@@ -52,6 +56,10 @@ def _child_node(session_id: int, edge: dict) -> dict:
     return {
         "session_id": session_id,
         "login": edge.get("blocked_login") or "—",
+        "host": edge.get("blocked_host") or "",
+        "program": edge.get("blocked_program") or "",
+        "database_name": edge.get("database_name") or "",
+        "open_tran": 0,
         "sql_snippet": edge.get("blocked_sql") or "",
         "command": edge.get("blocked_command") or "",
         "request_elapsed_sec": _safe_int(edge.get("request_elapsed_sec")),
@@ -73,10 +81,11 @@ def _safe_int(value: Any) -> int | None:
         return None
 
 
-def _subtree_metrics(node: dict) -> tuple[set[int], int]:
-    """Return (blocked_spids, chain_age_sec) for a built node subtree."""
+def _subtree_metrics(node: dict) -> tuple[set[int], int, float]:
+    """Return (blocked_spids, chain_age_sec, max_wait_sec) for a built node subtree."""
     blocked: set[int] = set()
     ages: list[int] = []
+    waits: list[float] = []
 
     def walk(n: dict, *, is_root_head: bool = False) -> None:
         elapsed = _safe_int(n.get("request_elapsed_sec"))
@@ -84,12 +93,19 @@ def _subtree_metrics(node: dict) -> tuple[set[int], int]:
             ages.append(elapsed)
         if not is_root_head:
             blocked.add(int(n["session_id"]))
+            try:
+                w = n.get("wait_sec")
+                if w is not None:
+                    waits.append(float(w))
+            except (TypeError, ValueError):
+                pass
         for child in n.get("children") or []:
             walk(child)
 
     walk(node, is_root_head=True)
     chain_age = max(ages) if ages else 0
-    return blocked, chain_age
+    max_wait = max(waits) if waits else 0.0
+    return blocked, chain_age, max_wait
 
 
 def _build_subtree(
@@ -131,6 +147,12 @@ def _build_subtree(
         if not parent_candidates:
             return None
         node = _child_node(session_id, parent_candidates[0])
+        # Intermediate blocker: open_tran lives on edges where this session is blocker
+        for _bid, edge in children_map.get(session_id, []):
+            ot = _safe_int(edge.get("blocker_open_tran"))
+            if ot is not None:
+                node["open_tran"] = ot
+                break
 
     child_ids: list[int] = []
     seen_child: set[int] = set()
@@ -213,7 +235,7 @@ def build_blocking_trees(rows: list[dict]) -> list[dict]:
         if head is None:
             continue
 
-        blocked_spids, chain_age_sec = _subtree_metrics(head)
+        blocked_spids, chain_age_sec, max_wait_sec = _subtree_metrics(head)
         trees.append(
             {
                 "head_session_id": root_id,
@@ -221,23 +243,36 @@ def build_blocking_trees(rows: list[dict]) -> list[dict]:
                 "children": head.get("children") or [],
                 "blast_radius": len(blocked_spids),
                 "chain_age_sec": chain_age_sec,
+                "max_wait_sec": max_wait_sec,
                 "blocked_spids": sorted(blocked_spids),
             }
         )
 
+    # Worst blast / longest wait first (ops scan)
+    trees.sort(
+        key=lambda t: (
+            int(t.get("blast_radius") or 0),
+            float(t.get("max_wait_sec") or 0),
+            int(t.get("chain_age_sec") or 0),
+        ),
+        reverse=True,
+    )
     return trees
 
 
 def summarize_blocking_trees(trees: list[dict]) -> dict:
-    """Aggregate global blast radius, head count, and max chain age."""
+    """Aggregate global blast radius, head count, max chain age, longest wait."""
     all_blocked: set[int] = set()
     max_age = 0
+    max_wait = 0.0
     for tree in trees:
         spids = tree.get("blocked_spids") or []
         all_blocked.update(int(s) for s in spids)
         max_age = max(max_age, int(tree.get("chain_age_sec") or 0))
+        max_wait = max(max_wait, float(tree.get("max_wait_sec") or 0))
     return {
         "head_blockers": len(trees),
         "blast_radius": len(all_blocked),
         "chain_age_sec": max_age,
+        "longest_wait_ms": int(max_wait * 1000),
     }

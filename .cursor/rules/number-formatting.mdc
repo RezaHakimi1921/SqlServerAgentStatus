@@ -1,0 +1,17 @@
+---
+description: Format all numeric UI values with thousand separators; durations as readable time.
+alwaysApply: true
+---
+
+# Number & duration formatting
+
+When showing numbers anywhere in the UI (tables, health cards, Session Lookup, Insights, Jobs):
+
+1. **Integers / counters** (CPU, reads, writes, waits in ms when shown as raw count, row counts, memory): use `fmt_int` from `core.formatters` — groups of three digits (`106,657,611`).
+2. **Elapsed / duration from milliseconds**: use `fmt_duration_hms` → `HH:MM:SS` (e.g. `09:10:49`; hours may exceed 24). For short human labels use `fmt_running_label`. Keep `fmt_elapsed_whois` only if WhoIsActive day+ms format is explicitly needed.
+3. Do **not** dump bare `str(1234567)` into the UI for metrics.
+4. Keep SQL / SessionId / ports unformatted when they are identifiers, not quantities.
+
+```python
+from core.formatters import fmt_int, fmt_duration_hms
+```
