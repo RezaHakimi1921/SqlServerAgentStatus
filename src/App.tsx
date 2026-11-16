@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import FleetView from "./FleetView";
 
 type IconName =
   | "grid"
@@ -266,11 +267,11 @@ const jobs = [
 
 const nav = [
   { key: "overview", label: "نمای کلی", icon: "grid" as IconName },
+  { key: "health", label: "مدیریت سرورها", icon: "server" as IconName, badge: "۳" },
   { key: "jobs", label: "جاب‌ها", icon: "jobs" as IconName, badge: "۸۷" },
   { key: "timeline", label: "خط زمانی", icon: "timeline" as IconName },
   { key: "incidents", label: "رخدادها", icon: "alert" as IconName, badge: "۴" },
   { key: "history", label: "تاریخچه و روند", icon: "history" as IconName },
-  { key: "health", label: "سلامت سرورها", icon: "health" as IconName },
 ];
 
 const statusMeta: Record<string, { label: string; className: string }> = {
@@ -313,7 +314,7 @@ function App() {
   const switchNav = (key: string) => {
     setActiveNav(key);
     setMobileNav(false);
-    if (key !== "overview" && key !== "jobs")
+    if (key !== "overview" && key !== "jobs" && key !== "health")
       showToast("این نما در نسخه نمایشی به نمای کلی متصل است");
   };
 
@@ -420,8 +421,18 @@ function App() {
           <div className="page-heading">
             <div>
               <div className="eyebrow">سه‌شنبه ۲۸ آبان، ساعت ۱۰:۱۲</div>
-              <h1>{activeNav === "jobs" ? "فهرست جاب‌ها" : "صبح بخیر، رضا"}</h1>
-              <p>وضعیت SQL Server Agentهای شما در یک نگاه؛ همه‌چیز تحت کنترل است.</p>
+              <h1>
+                {activeNav === "jobs"
+                  ? "فهرست جاب‌ها"
+                  : activeNav === "health"
+                    ? "مدیریت سرورها"
+                    : "صبح بخیر، رضا"}
+              </h1>
+              <p>
+                {activeNav === "health"
+                  ? "سلامت، دسترس‌پذیری و تازگی داده تمام SQL Serverها را مدیریت کنید."
+                  : "وضعیت SQL Server Agentهای شما در یک نگاه؛ همه‌چیز تحت کنترل است."}
+              </p>
             </div>
             <div className="heading-actions">
               <button className="button secondary" onClick={() => setPaused(!paused)}>
@@ -434,319 +445,327 @@ function App() {
             </div>
           </div>
 
-          <section className="freshness-banner">
-            <div className="freshness-icon">
-              <Icon name="check" size={18} />
-            </div>
-            <div>
-              <b>داده‌ها به‌روز و قابل اعتماد هستند</b>
-              <span>هر ۳۰ ثانیه از ۳ سرور واکشی می‌شود؛ آخرین پاسخ موفق در ۱۰:۱۱:۴۲</span>
-            </div>
-            <button onClick={() => switchNav("health")}>
-              مشاهده سلامت سرورها <Icon name="chevron" size={15} />
-            </button>
-          </section>
-
-          <section className="stats-grid">
-            <button
-              className={`stat-card running ${filter === "running" ? "selected" : ""}`}
-              onClick={() => setFilter("running")}
-            >
-              <div className="stat-top">
-                <span className="stat-icon">
-                  <Icon name="play" size={19} />
-                </span>
-                <span className="trend up">
-                  +۲ از دیروز <Icon name="trend" size={14} />
-                </span>
-              </div>
-              <strong>۱۲</strong>
-              <span>در حال اجرا</span>
-              <small>از مجموع ۸۷ جاب فعال</small>
-              <div className="spark bars">
-                {[5, 8, 6, 12, 9, 15, 13, 18, 14, 20, 17, 22].map((h, i) => (
-                  <i key={i} style={{ height: h }} />
-                ))}
-              </div>
-            </button>
-            <button
-              className={`stat-card success ${filter === "success" ? "selected" : ""}`}
-              onClick={() => setFilter("success")}
-            >
-              <div className="stat-top">
-                <span className="stat-icon">
-                  <Icon name="check" size={19} />
-                </span>
-                <span className="trend">۹۶٫۸٪ نرخ موفقیت</span>
-              </div>
-              <strong>۶۸</strong>
-              <span>اجرای موفق امروز</span>
-              <small>۴ اجرای بیشتر از میانگین</small>
-              <svg className="spark line" viewBox="0 0 140 30">
-                <path d="M2 25C15 22 18 12 31 17S48 23 58 13s18 7 29-1 16-7 24-3 18-3 27-7" />
-                <path
-                  className="fill"
-                  d="M2 25C15 22 18 12 31 17S48 23 58 13s18 7 29-1 16-7 24-3 18-3 27-7V30H2Z"
-                />
-              </svg>
-            </button>
-            <button
-              className={`stat-card failed ${filter === "failed" ? "selected" : ""}`}
-              onClick={() => setFilter("failed")}
-            >
-              <div className="stat-top">
-                <span className="stat-icon">
-                  <Icon name="warning" size={19} />
-                </span>
-                <span className="trend down">۲ مورد جدید</span>
-              </div>
-              <strong>۴</strong>
-              <span>نیازمند رسیدگی</span>
-              <small>۱ مورد با شدت بحرانی</small>
-              <div className="incident-mini">
-                <span />
-                <span />
-                <span />
-                <i />
-                <i />
-              </div>
-            </button>
-            <button className="stat-card duration" onClick={() => switchNav("history")}>
-              <div className="stat-top">
-                <span className="stat-icon">
-                  <Icon name="clock" size={19} />
-                </span>
-                <span className="trend">−۱۲٪ این هفته</span>
-              </div>
-              <strong>۰۶:۳۲</strong>
-              <span>میانگین مدت اجرا</span>
-              <small>۲۱ ثانیه بهتر از هفته قبل</small>
-              <svg className="spark line" viewBox="0 0 140 30">
-                <path d="M2 7c12 2 17 13 30 8s19-2 29 3 20 2 30 4 18-9 26-7 12-4 21 2" />
-                <path
-                  className="fill"
-                  d="M2 7c12 2 17 13 30 8s19-2 29 3 20 2 30 4 18-9 26-7 12-4 21 2v13H2Z"
-                />
-              </svg>
-            </button>
-          </section>
-
-          <section className="workspace-card">
-            <div className="section-head">
-              <div>
-                <h2>وضعیت جاب‌ها</h2>
-                <p>آخرین وضعیت اجرا در تمام سرورها</p>
-              </div>
-              <div className="view-tabs">
-                <button className="active">
-                  <Icon name="jobs" size={16} /> فهرست
-                </button>
-                <button onClick={() => switchNav("timeline")}>
-                  <Icon name="timeline" size={16} /> خط زمانی
-                </button>
-              </div>
-            </div>
-            <div className="table-toolbar">
-              <div className="status-filters">
-                {Object.entries(statusMeta)
-                  .slice(0, 5)
-                  .map(([key, value]) => (
-                    <button
-                      key={key}
-                      className={filter === key ? "active" : ""}
-                      onClick={() => setFilter(key)}
-                    >
-                      {value.label}
-                      {key !== "all" && <span>{jobs.filter((j) => j.status === key).length}</span>}
-                    </button>
-                  ))}
-              </div>
-              <div className="toolbar-tools">
-                <label className="search">
-                  <Icon name="search" size={18} />
-                  <input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="جستجوی نام جاب یا سرور..."
-                  />
-                  {query && (
-                    <button onClick={() => setQuery("")}>
-                      <Icon name="close" size={14} />
-                    </button>
-                  )}
-                </label>
-                <button className="icon-button">
-                  <Icon name="filter" size={17} />
-                </button>
-              </div>
-            </div>
-
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>نام جاب</th>
-                    <th>وضعیت</th>
-                    <th>سرور</th>
-                    <th>مدت / پیشرفت</th>
-                    <th>آخرین اجرا</th>
-                    <th>اجرای بعدی</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredJobs.map((job) => (
-                    <tr key={job.id} onClick={() => setSelectedJob(job)}>
-                      <td>
-                        <div className="job-name">
-                          <span className={`job-symbol ${job.status}`}>
-                            <Icon
-                              name={
-                                job.status === "running"
-                                  ? "play"
-                                  : job.status === "failed"
-                                    ? "warning"
-                                    : "layers"
-                              }
-                              size={17}
-                            />
-                          </span>
-                          <div>
-                            <b>{job.name}</b>
-                            <small>
-                              {job.group} · {job.owner}
-                            </small>
-                          </div>
-                        </div>
-                      </td>
-                      <td>
-                        <span className={`status-badge ${job.status}`}>
-                          <i />
-                          {job.statusFa}
-                        </span>
-                      </td>
-                      <td>
-                        <span className="server-name">{job.server}</span>
-                      </td>
-                      <td>
-                        <div className="duration-cell">
-                          <span>{job.duration}</span>
-                          <div className="progress">
-                            <i className={job.status} style={{ width: `${job.progress}%` }} />
-                          </div>
-                          {job.status === "running" && <small>برآورد</small>}
-                        </div>
-                      </td>
-                      <td>{job.last}</td>
-                      <td>{job.next}</td>
-                      <td>
-                        <button className="row-action">
-                          <Icon name="chevron" size={17} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {!filteredJobs.length && (
-                <div className="empty-state">
-                  <Icon name="search" size={30} />
-                  <b>نتیجه‌ای پیدا نشد</b>
-                  <span>عبارت جستجو یا فیلتر وضعیت را تغییر دهید.</span>
+          {activeNav === "health" ? (
+            <FleetView />
+          ) : (
+            <>
+              <section className="freshness-banner">
+                <div className="freshness-icon">
+                  <Icon name="check" size={18} />
                 </div>
-              )}
-            </div>
-            <div className="table-footer">
-              <span>نمایش {filteredJobs.length} مورد از ۸۷ جاب</span>
-              <button>
-                مشاهده همه جاب‌ها <Icon name="chevron" size={15} />
-              </button>
-            </div>
-          </section>
-
-          <div className="lower-grid">
-            <section className="workspace-card incidents-card">
-              <div className="section-head">
                 <div>
-                  <h2>رخدادهای نیازمند توجه</h2>
-                  <p>موارد جدید و تأییدنشده</p>
+                  <b>داده‌ها به‌روز و قابل اعتماد هستند</b>
+                  <span>هر ۳۰ ثانیه از ۳ سرور واکشی می‌شود؛ آخرین پاسخ موفق در ۱۰:۱۱:۴۲</span>
                 </div>
-                <button className="text-button" onClick={() => switchNav("incidents")}>
-                  مشاهده همه <Icon name="chevron" size={15} />
+                <button onClick={() => switchNav("health")}>
+                  مشاهده سلامت سرورها <Icon name="chevron" size={15} />
                 </button>
-              </div>
-              {[
-                [
-                  "Sync_CRM_Customers",
-                  "خطا در Step «Merge customers»",
-                  "بحرانی",
-                  "۹ دقیقه پیش",
-                  "critical",
-                ],
-                [
-                  "Calculate_Daily_KPIs",
-                  "مدت اجرا ۲٫۴ برابر مقدار معمول است",
-                  "هشدار",
-                  "۲۴ دقیقه پیش",
-                  "warning",
-                ],
-                ["SQL-PROD-02", "تأخیر در آخرین واکشی داده", "اطلاع", "۳۸ دقیقه پیش", "info"],
-              ].map((x, i) => (
-                <button className="incident-row" key={i}>
-                  <span className={`incident-icon ${x[4]}`}>
-                    <Icon name={x[4] === "critical" ? "alert" : "warning"} size={18} />
-                  </span>
-                  <div>
-                    <b>{x[0]}</b>
-                    <span>{x[1]}</span>
-                  </div>
-                  <div className="incident-meta">
-                    <em className={x[4]}>{x[2]}</em>
-                    <small>{x[3]}</small>
-                  </div>
-                  <Icon name="chevron" size={16} />
-                </button>
-              ))}
-            </section>
-            <section className="workspace-card servers-card">
-              <div className="section-head">
-                <div>
-                  <h2>سلامت سرورها</h2>
-                  <p>وضعیت اتصال و تازگی داده</p>
-                </div>
-                <button className="text-button" onClick={() => switchNav("health")}>
-                  جزئیات <Icon name="chevron" size={15} />
-                </button>
-              </div>
-              {[
-                ["SQL-PROD-01", "Production", "سالم", "۱۲ms", "online", 48],
-                ["SQL-PROD-02", "Production", "کند", "۱۲۰ms", "slow", 76],
-                ["SQL-REPORT-01", "Reporting", "سالم", "۱۸ms", "online", 61],
-              ].map((s, i) => (
-                <div className="server-row" key={i}>
-                  <span className={`server-icon ${s[4]}`}>
-                    <Icon name="server" size={19} />
-                  </span>
-                  <div>
-                    <b>{s[0]}</b>
-                    <small>{s[1]}</small>
-                  </div>
-                  <div className="server-load">
-                    <span>
-                      بار Agent <b>{s[5]}٪</b>
+              </section>
+
+              <section className="stats-grid">
+                <button
+                  className={`stat-card running ${filter === "running" ? "selected" : ""}`}
+                  onClick={() => setFilter("running")}
+                >
+                  <div className="stat-top">
+                    <span className="stat-icon">
+                      <Icon name="play" size={19} />
                     </span>
-                    <i>
-                      <em style={{ width: `${s[5]}%` }} />
-                    </i>
+                    <span className="trend up">
+                      +۲ از دیروز <Icon name="trend" size={14} />
+                    </span>
                   </div>
-                  <span className={`health-badge ${s[4]}`}>
+                  <strong>۱۲</strong>
+                  <span>در حال اجرا</span>
+                  <small>از مجموع ۸۷ جاب فعال</small>
+                  <div className="spark bars">
+                    {[5, 8, 6, 12, 9, 15, 13, 18, 14, 20, 17, 22].map((h, i) => (
+                      <i key={i} style={{ height: h }} />
+                    ))}
+                  </div>
+                </button>
+                <button
+                  className={`stat-card success ${filter === "success" ? "selected" : ""}`}
+                  onClick={() => setFilter("success")}
+                >
+                  <div className="stat-top">
+                    <span className="stat-icon">
+                      <Icon name="check" size={19} />
+                    </span>
+                    <span className="trend">۹۶٫۸٪ نرخ موفقیت</span>
+                  </div>
+                  <strong>۶۸</strong>
+                  <span>اجرای موفق امروز</span>
+                  <small>۴ اجرای بیشتر از میانگین</small>
+                  <svg className="spark line" viewBox="0 0 140 30">
+                    <path d="M2 25C15 22 18 12 31 17S48 23 58 13s18 7 29-1 16-7 24-3 18-3 27-7" />
+                    <path
+                      className="fill"
+                      d="M2 25C15 22 18 12 31 17S48 23 58 13s18 7 29-1 16-7 24-3 18-3 27-7V30H2Z"
+                    />
+                  </svg>
+                </button>
+                <button
+                  className={`stat-card failed ${filter === "failed" ? "selected" : ""}`}
+                  onClick={() => setFilter("failed")}
+                >
+                  <div className="stat-top">
+                    <span className="stat-icon">
+                      <Icon name="warning" size={19} />
+                    </span>
+                    <span className="trend down">۲ مورد جدید</span>
+                  </div>
+                  <strong>۴</strong>
+                  <span>نیازمند رسیدگی</span>
+                  <small>۱ مورد با شدت بحرانی</small>
+                  <div className="incident-mini">
+                    <span />
+                    <span />
+                    <span />
                     <i />
-                    {s[2]} · {s[3]}
-                  </span>
+                    <i />
+                  </div>
+                </button>
+                <button className="stat-card duration" onClick={() => switchNav("history")}>
+                  <div className="stat-top">
+                    <span className="stat-icon">
+                      <Icon name="clock" size={19} />
+                    </span>
+                    <span className="trend">−۱۲٪ این هفته</span>
+                  </div>
+                  <strong>۰۶:۳۲</strong>
+                  <span>میانگین مدت اجرا</span>
+                  <small>۲۱ ثانیه بهتر از هفته قبل</small>
+                  <svg className="spark line" viewBox="0 0 140 30">
+                    <path d="M2 7c12 2 17 13 30 8s19-2 29 3 20 2 30 4 18-9 26-7 12-4 21 2" />
+                    <path
+                      className="fill"
+                      d="M2 7c12 2 17 13 30 8s19-2 29 3 20 2 30 4 18-9 26-7 12-4 21 2v13H2Z"
+                    />
+                  </svg>
+                </button>
+              </section>
+
+              <section className="workspace-card">
+                <div className="section-head">
+                  <div>
+                    <h2>وضعیت جاب‌ها</h2>
+                    <p>آخرین وضعیت اجرا در تمام سرورها</p>
+                  </div>
+                  <div className="view-tabs">
+                    <button className="active">
+                      <Icon name="jobs" size={16} /> فهرست
+                    </button>
+                    <button onClick={() => switchNav("timeline")}>
+                      <Icon name="timeline" size={16} /> خط زمانی
+                    </button>
+                  </div>
                 </div>
-              ))}
-            </section>
-          </div>
+                <div className="table-toolbar">
+                  <div className="status-filters">
+                    {Object.entries(statusMeta)
+                      .slice(0, 5)
+                      .map(([key, value]) => (
+                        <button
+                          key={key}
+                          className={filter === key ? "active" : ""}
+                          onClick={() => setFilter(key)}
+                        >
+                          {value.label}
+                          {key !== "all" && (
+                            <span>{jobs.filter((j) => j.status === key).length}</span>
+                          )}
+                        </button>
+                      ))}
+                  </div>
+                  <div className="toolbar-tools">
+                    <label className="search">
+                      <Icon name="search" size={18} />
+                      <input
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        placeholder="جستجوی نام جاب یا سرور..."
+                      />
+                      {query && (
+                        <button onClick={() => setQuery("")}>
+                          <Icon name="close" size={14} />
+                        </button>
+                      )}
+                    </label>
+                    <button className="icon-button">
+                      <Icon name="filter" size={17} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>نام جاب</th>
+                        <th>وضعیت</th>
+                        <th>سرور</th>
+                        <th>مدت / پیشرفت</th>
+                        <th>آخرین اجرا</th>
+                        <th>اجرای بعدی</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredJobs.map((job) => (
+                        <tr key={job.id} onClick={() => setSelectedJob(job)}>
+                          <td>
+                            <div className="job-name">
+                              <span className={`job-symbol ${job.status}`}>
+                                <Icon
+                                  name={
+                                    job.status === "running"
+                                      ? "play"
+                                      : job.status === "failed"
+                                        ? "warning"
+                                        : "layers"
+                                  }
+                                  size={17}
+                                />
+                              </span>
+                              <div>
+                                <b>{job.name}</b>
+                                <small>
+                                  {job.group} · {job.owner}
+                                </small>
+                              </div>
+                            </div>
+                          </td>
+                          <td>
+                            <span className={`status-badge ${job.status}`}>
+                              <i />
+                              {job.statusFa}
+                            </span>
+                          </td>
+                          <td>
+                            <span className="server-name">{job.server}</span>
+                          </td>
+                          <td>
+                            <div className="duration-cell">
+                              <span>{job.duration}</span>
+                              <div className="progress">
+                                <i className={job.status} style={{ width: `${job.progress}%` }} />
+                              </div>
+                              {job.status === "running" && <small>برآورد</small>}
+                            </div>
+                          </td>
+                          <td>{job.last}</td>
+                          <td>{job.next}</td>
+                          <td>
+                            <button className="row-action">
+                              <Icon name="chevron" size={17} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {!filteredJobs.length && (
+                    <div className="empty-state">
+                      <Icon name="search" size={30} />
+                      <b>نتیجه‌ای پیدا نشد</b>
+                      <span>عبارت جستجو یا فیلتر وضعیت را تغییر دهید.</span>
+                    </div>
+                  )}
+                </div>
+                <div className="table-footer">
+                  <span>نمایش {filteredJobs.length} مورد از ۸۷ جاب</span>
+                  <button>
+                    مشاهده همه جاب‌ها <Icon name="chevron" size={15} />
+                  </button>
+                </div>
+              </section>
+
+              <div className="lower-grid">
+                <section className="workspace-card incidents-card">
+                  <div className="section-head">
+                    <div>
+                      <h2>رخدادهای نیازمند توجه</h2>
+                      <p>موارد جدید و تأییدنشده</p>
+                    </div>
+                    <button className="text-button" onClick={() => switchNav("incidents")}>
+                      مشاهده همه <Icon name="chevron" size={15} />
+                    </button>
+                  </div>
+                  {[
+                    [
+                      "Sync_CRM_Customers",
+                      "خطا در Step «Merge customers»",
+                      "بحرانی",
+                      "۹ دقیقه پیش",
+                      "critical",
+                    ],
+                    [
+                      "Calculate_Daily_KPIs",
+                      "مدت اجرا ۲٫۴ برابر مقدار معمول است",
+                      "هشدار",
+                      "۲۴ دقیقه پیش",
+                      "warning",
+                    ],
+                    ["SQL-PROD-02", "تأخیر در آخرین واکشی داده", "اطلاع", "۳۸ دقیقه پیش", "info"],
+                  ].map((x, i) => (
+                    <button className="incident-row" key={i}>
+                      <span className={`incident-icon ${x[4]}`}>
+                        <Icon name={x[4] === "critical" ? "alert" : "warning"} size={18} />
+                      </span>
+                      <div>
+                        <b>{x[0]}</b>
+                        <span>{x[1]}</span>
+                      </div>
+                      <div className="incident-meta">
+                        <em className={x[4]}>{x[2]}</em>
+                        <small>{x[3]}</small>
+                      </div>
+                      <Icon name="chevron" size={16} />
+                    </button>
+                  ))}
+                </section>
+                <section className="workspace-card servers-card">
+                  <div className="section-head">
+                    <div>
+                      <h2>سلامت سرورها</h2>
+                      <p>وضعیت اتصال و تازگی داده</p>
+                    </div>
+                    <button className="text-button" onClick={() => switchNav("health")}>
+                      جزئیات <Icon name="chevron" size={15} />
+                    </button>
+                  </div>
+                  {[
+                    ["SQL-PROD-01", "Production", "سالم", "۱۲ms", "online", 48],
+                    ["SQL-PROD-02", "Production", "کند", "۱۲۰ms", "slow", 76],
+                    ["SQL-REPORT-01", "Reporting", "سالم", "۱۸ms", "online", 61],
+                  ].map((s, i) => (
+                    <div className="server-row" key={i}>
+                      <span className={`server-icon ${s[4]}`}>
+                        <Icon name="server" size={19} />
+                      </span>
+                      <div>
+                        <b>{s[0]}</b>
+                        <small>{s[1]}</small>
+                      </div>
+                      <div className="server-load">
+                        <span>
+                          بار Agent <b>{s[5]}٪</b>
+                        </span>
+                        <i>
+                          <em style={{ width: `${s[5]}%` }} />
+                        </i>
+                      </div>
+                      <span className={`health-badge ${s[4]}`}>
+                        <i />
+                        {s[2]} · {s[3]}
+                      </span>
+                    </div>
+                  ))}
+                </section>
+              </div>
+            </>
+          )}
         </div>
       </main>
 
