@@ -112,6 +112,20 @@ Microsoft توصیه می‌کند استفاده index در گذر زمان پ�
 
 در نسخه‌های بعدی می‌توان health backup/restore، وضعیت availability/replication، blocking/deadlock، wait statistics، وضعیت TempDB، growth transaction log و تغییرات configuration را اضافه کرد. هر منبع باید به ماژول مستقل با نرخ جمع‌آوری و مجوزهای روشن تبدیل شود. برای عملیات فیزیکی بررسی index، سطح scan و اثر آن باید محتاطانه انتخاب شود؛ DMV فیزیکی اطلاعات fragmentation و page count می‌دهد و روی readable secondary می‌تواند REDO را block کند، پس جمع‌آوری گسترده آن نیازمند برنامه‌ریزی است [8].
 
+### ۴.۷ Fleet و خطاهای حیاتی سرورها
+
+**مشاهده:** داشبورد باید همه instanceهای ثبت‌شده را در Fleet نشان دهد و برای هرکدام health، محیط، گروه، آخرین poll موفق/ناموفق، سن داده، خطای sanitized و شمار رخدادهای باز به تفکیک severity نمایش دهد. اتصال SQL Server، دسترسی Agent، سلامت Collector و سلامت database/file منبع‌های جدا هستند؛ یک timeout لحظه‌ای نباید به‌تنهایی به‌عنوان outage قطعی تفسیر شود.
+
+**خطاهای نسخه پایه:** اتصال ناپذیر پس از چند check، خطای authentication/permission، data stale، collector failure، failure تکراری/critical Job، overdue، Job disabled منتخب و آستانه ظرفیت. خطای OS service، CPU، memory، network و host disk فقط در صورت وجود collector یا API معتبر سیستم‌عامل نمایش داده شود.
+
+**اولویت‌بندی:** severityها critical/high/warning/info باشند؛ rule، threshold، evidence و علت severity در UI قابل مشاهده باشد. رخداد مشابه با dedup key در یک رویداد نگه‌داری شود و شمار مشاهده/last_seen به‌روز گردد. recovery، acknowledge، suppress در maintenance و delivery failure history مستقل داشته باشند.
+
+### ۴.۸ کانال اعلان Email و Webhook
+
+Email و Webhook هر دو کانال موردنیاز هستند. رخدادهای مهم می‌توانند به هر دو کانال بروند؛ انتخاب severity و مقصد قابل تنظیم باشد. اعلان شامل خلاصه رخداد، instance/environment، زمان مشاهده، evidence پاک‌سازی‌شده، لینک و وضعیت رسیدگی باشد و credential، query text یا Job command را افشا نکند. Webhook فقط به مقصد مدیر-تأییدشده، HTTPS، با HMAC signature، timeout، retry محدود/backoff و log تلاش‌ها ارسال شود. Email از SMTP با TLS، secret جدا، test delivery و redaction استفاده کند.
+
+ارسال باید در worker/dispatcher و با outbox ماندگار انجام شود، نه از callback صفحه. وجود رخداد از موفقیت ارسال مستقل است؛ قطع SMTP/webhook نباید alert را حذف کند و restart برنامه نباید pending delivery را گم کند. Bell فعلی صرفاً نمایش failureهای امروز است و تا اتصال به event store سامانه اعلان خارجی محسوب نمی‌شود.
+
 ## ۵. موتور Insight و چرخه عمر پیشنهاد
 
 هر Insight باید این فیلدها را داشته باشد:
@@ -146,6 +160,8 @@ AI/مدل زبانی، اگر بعداً افزوده شود، فقط می‌ت�
 ### نمای کلی
 
 نمای Fleet/Instance با سلامت اتصال، alertهای مهم، موارد نزدیک به آستانه ظرفیت، Query regressionهای جدید، Jobهای overdue و تغییرات برجسته. هر کارت به جزئیات منبع و بازه باز شود.
+
+نمای ناوگان باید تعداد سرورهای healthy/degraded/unreachable و critical/high باز را خلاصه کند. با انتخاب سرور، خطای آخر، تاریخچه health check و collector freshness نمایش داده شود؛ وضعیت هر سرور از باقی Fleet مستقل بماند.
 
 ### مرکز Insight
 
@@ -204,6 +220,9 @@ Schedule و اجرای بعدی، سابقه اجرا، trend مدت، Step fail
 - اقدام تأییدشده دارای preview، audit، outcome، سنجه قبل/بعد و راه برگشت باشد.
 - جمع‌آوری queryهای سنگین و physical stats محدود، زمان‌بندی‌پذیر و قابل توقف باشد.
 - هر instance در صورت شکست جمع‌آوری جداگانه علامت‌گذاری شود و داده سالم سایر instanceها حفظ شود.
+- Fleet view وضعیت `healthy/degraded/unreachable/disabled/unknown` و آخرین poll را به‌تفکیک instance نشان دهد.
+- alertهای critical/high با dedup، lifecycle، acknowledgement و evidence نگه‌داری شوند؛ خطای destination رخداد را پاک نکند.
+- Email و Webhook با test delivery و mock tests پوشش داده شوند؛ webhook دارای HMAC/HTTPS باشد و secret در log/API نیاید.
 
 ## منابع
 
