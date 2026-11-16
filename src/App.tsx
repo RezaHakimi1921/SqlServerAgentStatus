@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import FleetView from "./FleetView";
+import TimelineView from "./TimelineView";
 
 type IconName =
   | "grid"
@@ -314,7 +315,7 @@ function App() {
   const switchNav = (key: string) => {
     setActiveNav(key);
     setMobileNav(false);
-    if (key !== "overview" && key !== "jobs" && key !== "health")
+    if (key !== "overview" && key !== "jobs" && key !== "health" && key !== "timeline")
       showToast("این نما در نسخه نمایشی به نمای کلی متصل است");
   };
 
@@ -426,12 +427,16 @@ function App() {
                   ? "فهرست جاب‌ها"
                   : activeNav === "health"
                     ? "مدیریت سرورها"
-                    : "صبح بخیر، رضا"}
+                    : activeNav === "timeline"
+                      ? "خط زمانی اجراها"
+                      : "صبح بخیر، رضا"}
               </h1>
               <p>
                 {activeNav === "health"
                   ? "سلامت، دسترس‌پذیری و تازگی داده تمام SQL Serverها را مدیریت کنید."
-                  : "وضعیت SQL Server Agentهای شما در یک نگاه؛ همه‌چیز تحت کنترل است."}
+                  : activeNav === "timeline"
+                    ? "برنامه و اجرای واقعی Jobها را در طول روز مقایسه کنید."
+                    : "وضعیت SQL Server Agentهای شما در یک نگاه؛ همه‌چیز تحت کنترل است."}
               </p>
             </div>
             <div className="heading-actions">
@@ -447,6 +452,8 @@ function App() {
 
           {activeNav === "health" ? (
             <FleetView />
+          ) : activeNav === "timeline" ? (
+            <TimelineView />
           ) : (
             <>
               <section className="freshness-banner">
