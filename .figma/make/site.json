@@ -1,1 +1,10 @@
-{}
+{
+  "description": "Manage and monitor SQL Server Agent jobs and status through a simple, easy-to-use dashboard with clear navigation and an intuitive interface.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
