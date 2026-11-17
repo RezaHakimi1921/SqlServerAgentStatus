@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartMonitor — Full UI Mock (v1)</title>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <style>
+    :root {
+      --bg-primary: #0c0e14;
+      --bg-secondary: #13151e;
+      --bg-card: #191c28;
+      --bg-card-hover: #1e2233;
+      --bg-elevated: #222639;
+      --border: #2a2e3f;
+      --border-light: #353a50;
+      --text-primary: #e8eaf0;
+      --text-secondary: #9499b0;
+      --text-muted: #5d6280;
+      --accent: #3dd9b6;
+      --accent-bg: rgba(61,217,182,0.08);
+      --accent-border: rgba(61,217,182,0.2);
+      --success: #4ade80;
+      --success-bg: rgba(74,222,128,0.08);
+      --danger: #f87171;
+      --danger-bg: rgba(248,113,113,0.08);
+      --warn: #fb923c;
+      --warn-bg: rgba(251,146,60,0.08);
+      --idle: #64748b;
+      --rail-w: 228px;
+      --radius: 12px;
+      --shadow: 0 8px 28px rgba(0,0,0,0.28);
+      --font: "Vazirmatn", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+    }
+    body::before {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(61,217,182,0.05), transparent),
+        radial-gradient(ellipse 50% 40% at 85% 100%, rgba(248,113,113,0.03), transparent);
+    }
+    .app-rail {
+      position: fixed; top: 0; bottom: 0; right: 0; z-index: 40;
+      width: var(--rail-w); display: flex; flex-direction: column;
+      background: var(--bg-secondary); border-left: 1px solid var(--border);
+      box-shadow: -8px 0 28px rgba(0,0,0,0.35); direction: ltr;
+    }
+    .rail-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 12px; border-bottom: 1px solid var(--border); min-height: 56px;
+    }
+    .rail-brand {
+      font-size: 11px; font-weight: 800; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--text-secondary);
+    }
+    .rail-toggle, .icon-btn {
+      width: 34px; height: 34px; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--bg-card);
+      color: var(--text-primary); cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .rail-toggle:hover, .icon-btn:hover {
+      color: var(--accent); border-color: var(--accent-border); background: var(--accent-bg);
+    }
+    .rail-list { padding: 10px 8px; display: flex; flex-direction: column; gap: 4px; overflow: auto; }
+    .rail-item {
+      display: flex; align-items: center; gap: 10px; width: 100%;
+      padding: 10px; border-radius: 10px; border: 1px solid transparent;
+      background: transparent; color: var(--text-secondary); cursor: pointer;
+      font: inherit; font-size: 13px; font-weight: 650; text-align: left;
+    }
+    .rail-item i { width: 18px; text-align: center; }
+    .rail-item:hover { background: var(--accent-bg); border-color: var(--accent-border); color: var(--text-primary); }
+    .rail-item.is-active { background: var(--accent-bg); border-color: var(--accent-border); color: var(--accent); }
+    .rail-item.is-soon { opacity: 0.45; cursor: not-allowed; }
+    .rail-soon { margin-left: auto; font-size: 9px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); }
+    .shell {
+      position: relative; z-index: 1;
+      padding: 20px 28px 48px;
+      padding-right: calc(var(--rail-w) + 28px);
+      max-width: 1480px; margin: 0 auto;
+    }
+    .app-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-bottom: 16px; margin-bottom: 18px; border-bottom: 1px solid var(--border);
+      gap: 16px; flex-wrap: wrap;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .logo {
+      width: 40px; height: 40px; border-radius: 10px;
+      background: linear-gradient(135deg, var(--accent), #2ab89a);
+      color: #0c0e14; display: grid; place-items: center;
+      box-shadow: 0 4px 20px rgba(61,217,182,0.2);
+    }
+    .brand h1 { font-size: 20px; font-weight: 800; letter-spacing: -0.3px; }
+    .brand p { font-size: 12px; color: var(--text-muted); }
+    .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .live-pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 12px; border-radius: 999px;
+      background: var(--accent-bg); border: 1px solid var(--accent-border);
+      color: var(--accent); font-size: 12px; font-weight: 600;
+    }
+    .live-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+      box-shadow: 0 0 0 0 rgba(61,217,182,0.5);
+      animation: pulse 1.6s infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(61,217,182,0.45); }
+      70% { box-shadow: 0 0 0 8px rgba(61,217,182,0); }
+      100% { box-shadow: 0 0 0 0 rgba(61,217,182,0); }
+    }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      height: 38px; padding: 0 14px; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--bg-card);
+      color: var(--text-primary); font: inherit; font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: 0.15s ease;
+    }
+    .btn:hover { border-color: var(--border-light); background: var(--bg-card-hover); }
+    .btn-primary {
+      background: var(--accent); color: #0c0e14; border-color: transparent;
+    }
+    .btn-primary:hover { filter: brightness(1.05); }
+    .btn-ghost { color: var(--text-secondary); }
+    .view { display: none; animation: fade 0.22s ease; }
+    .view.is-active { display: block; }
+    @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    .section-title {
+      display: flex; align-items: baseline; justify-content: space-between;
+      gap: 12px; margin: 0 0 14px; flex-wrap: wrap;
+    }
+    .section-title h2 { font-size: 18px; font-weight: 800; }
+    .section-title span { font-size: 12px; color: var(--text-muted); }
+    .grid { display: grid; gap: 14px; }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    @media (max-width: 1100px) {
+      .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid-3, .grid-2 { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 900px) {
+      :root { --rail-w: 64px; }
+      .rail-brand, .rail-label, .rail-soon { display: none; }
+      .rail-item { justify-content: center; }
+    }
+    .card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow);
+    }
+    .card:hover { background: var(--bg-card-hover); }
+    .kpi {
+      position: relative; overflow: hidden;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px;
+    }
+    .kpi::before {
+      content: ""; position: absolute; inset-inline-start: 0; top: 0; bottom: 0; width: 3px;
+      background: var(--kpi, var(--accent));
+    }
+    .kpi-label { font-size: 12px; color: var(--text-secondary); font-weight: 600; margin-bottom: 8px; }
+    .kpi-value { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
+    .kpi-sub { margin-top: 8px; font-size: 11px; color: var(--text-muted); }
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700;
+      border: 1px solid transparent;
+    }
+    .badge-accent { background: var(--accent-bg); color: var(--accent); border-color: var(--accent-border); }
+    .badge-ok { background: var(--success-bg); color: var(--success); }
+    .badge-bad { background: var(--danger-bg); color: var(--danger); }
+    .badge-warn { background: var(--warn-bg); color: var(--warn); }
+    .badge-idle { background: rgba(100,116,139,0.12); color: var(--idle); }
+    .tabs {
+      display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px;
+      overflow-x: auto;
+    }
+    .tab {
+      appearance: none; border: 0; background: transparent; cursor: pointer;
+      color: var(--text-secondary); font: inherit; font-size: 13px; font-weight: 650;
+      padding: 10px 14px; position: relative; white-space: nowrap;
+    }
+    .tab.is-active { color: var(--accent); }
+    .tab.is-active::after {
+      content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px;
+      background: var(--accent); border-radius: 2px;
+    }
+    .table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 11px 12px; text-align: start; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    th { color: var(--text-muted); font-weight: 700; background: var(--bg-secondary); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    .mono { font-variant-numeric: tabular-nums; direction: ltr; text-align: left; }
+    .muted { color: var(--text-muted); }
+    .stack { display: flex; flex-direction: column; gap: 12px; }
+    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .field {
+      display: flex; flex-direction: column; gap: 6px; min-width: 180px; flex: 1;
+    }
+    .field label { font-size: 12px; color: var(--text-secondary); font-weight: 600; }
+    .field input, .field select, .field textarea {
+      height: 40px; border-radius: 10px; border: 1px solid var(--border);
+      background: var(--bg-elevated); color: var(--text-primary);
+      padding: 0 12px; font: inherit; font-size: 13px;
+    }
+    .field textarea { height: auto; min-height: 88px; padding: 10px 12px; resize: vertical; }
+    .home-hero { text-align: center; margin: 18px 0 28px; }
+    .home-hero h2 { font-size: 28px; font-weight: 800; margin-bottom: 8px; }
+    .home-hero p { color: var(--text-secondary); font-size: 14px; }
+    .home-grid {
+      display: grid; gap: 14px;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    }
+    .tile {
+      text-align: start; cursor: pointer; font: inherit;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 16px; padding: 18px; min-height: 150px;
+      display: flex; flex-direction: column; gap: 8px;
+      transition: 0.18s ease; color: inherit;
+    }
+    .tile:hover { border-color: var(--accent-border); transform: translateY(-2px); }
+    .tile.soon { opacity: 0.5; cursor: not-allowed; }
+    .tile-ico {
+      width: 40px; height: 40px; border-radius: 12px;
+      display: grid; place-items: center;
+      background: var(--accent-bg); color: var(--accent); border: 1px solid var(--accent-border);
+    }
+    .tile-title { font-size: 16px; font-weight: 800; }
+    .tile-sub { font-size: 12px; color: var(--text-secondary); line-height: 1.5; flex: 1; }
+    .tile-cta { font-size: 12px; font-weight: 700; color: var(--accent); }
+    .tree { display: flex; flex-direction: column; gap: 8px; }
+    .tree-node {
+      border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+      background: var(--bg-elevated);
+    }
+    .tree-node.is-blocker { border-color: rgba(248,113,113,0.35); background: var(--danger-bg); }
+    .tree-kids { margin-top: 8px; padding-inline-start: 16px; border-inline-start: 2px solid var(--border); display: grid; gap: 8px; }
+    .toast-stack {
+      position: fixed; top: 16px; left: 16px; z-index: 60;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .toast {
+      min-width: 220px; padding: 10px 14px; border-radius: 10px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      box-shadow: var(--shadow); font-size: 12px; font-weight: 600;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .toast .spin {
+      width: 14px; height: 14px; border-radius: 50%;
+      border: 2px solid var(--accent-border); border-top-color: var(--accent);
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .empty {
+      padding: 36px 20px; text-align: center; color: var(--text-secondary);
+      border: 1px dashed var(--border); border-radius: var(--radius);
+    }
+    .code {
+      direction: ltr; text-align: left; font-family: Consolas, monospace;
+      background: #0a0c12; border: 1px solid var(--border); border-radius: 10px;
+      padding: 12px; font-size: 12px; color: #c9d1d9; overflow: auto;
+    }
+    .progress {
+      height: 8px; border-radius: 999px; background: rgba(255,255,255,0.06); overflow: hidden;
+    }
+    .progress > span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), #2dd4a8); }
+    .note {
+      margin-top: 18px; padding: 12px 14px; border-radius: 10px;
+      background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+      font-size: 12px; color: var(--text-secondary); line-height: 1.7;
+    }
+    .slice-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 8px; border-radius: 8px; font-size: 11px; font-weight: 700;
+      background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+  <div class="toast-stack" id="toasts" aria-live="polite"></div>
+
+  <aside class="app-rail" aria-label="منوی ماژول‌ها">
+    <div class="rail-head">
+      <span class="rail-brand">Menu</span>
+      <button type="button" class="rail-toggle" title="Collapse" aria-label="جمع کردن"><i class="fas fa-angles-right"></i></button>
+    </div>
+    <nav class="rail-list" id="rail">
+      <button type="button" class="rail-item is-active" data-view="home"><i class="fas fa-house"></i><span class="rail-label">Home</span></button>
+      <button type="button" class="rail-item" data-view="jobs"><i class="fas fa-bolt"></i><span class="rail-label">Jobs</span></button>
+      <button type="button" class="rail-item" data-view="activity"><i class="fas fa-wave-square"></i><span class="rail-label">Activity</span></button>
+      <button type="button" class="rail-item" data-view="insights"><i class="fas fa-lightbulb"></i><span class="rail-label">Insights</span></button>
+      <button type="button" class="rail-item" data-view="tables"><i class="fas fa-table"></i><span class="rail-label">Tables</span></button>
+      <button type="button" class="rail-item" data-view="indexes"><i class="fas fa-list-ol"></i><span class="rail-label">Indexes</span></button>
+      <button type="button" class="rail-item" data-view="docs"><i class="fas fa-book"></i><span class="rail-label">Docs</span></button>
+      <button type="button" class="rail-item is-soon" disabled data-view="disk"><i class="fas fa-hard-drive"></i><span class="rail-label">Disk</span><span class="rail-soon">Soon</span></button>
+      <button type="button" class="rail-item is-soon" disabled data-view="waits"><i class="fas fa-clock"></i><span class="rail-label">Waits</span><span class="rail-soon">Soon</span></button>
+      <button type="button" class="rail-item" data-view="settings"><i class="fas fa-gear"></i><span class="rail-label">Settings</span></button>
+    </nav>
+  </aside>
+
+  <div class="shell">
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo"><i class="fas fa-database"></i></div>
+        <div>
+          <h1>Data Agent Monitor</h1>
+          <p id="header-sub">SQL Server Monitor — Full UI Mock</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <span class="live-pill"><span class="live-dot"></span> زنده · 127.0.0.1</span>
+        <button type="button" class="btn btn-ghost" id="btn-lang"><i class="fas fa-language"></i> FA / EN</button>
+        <button type="button" class="btn" id="btn-pause"><i class="fas fa-pause"></i> Pause</button>
+        <button type="button" class="btn btn-primary" id="btn-refresh"><i class="fas fa-rotate"></i> Refresh</button>
+      </div>
+    </header>
+
+    <!-- HOME -->
+    <section class="view is-active" id="view-home" data-title="خانه">
+      <div class="home-hero">
+        <h2>یک مانیتور برای حلقهٔ روزانهٔ DBA</h2>
+        <p>جاب‌ها، بلاکینگ، جداول، ایندکس‌ها و بینش امروز — بدون خروج از SSMS فقط وقتی لازم است.</p>
+      </div>
+      <div class="home-grid" id="home-tiles">
+        <button class="tile" data-view="jobs"><div class="tile-ico"><i class="fas fa-bolt"></i></div><div class="tile-title">Agent Jobs</div><div class="tile-sub">Running، تاریخچه، Gantt ۲۴ ساعته</div><div class="tile-cta">باز کردن</div></button>
+        <button class="tile" data-view="activity"><div class="tile-ico"><i class="fas fa-wave-square"></i></div><div class="tile-title">Activity</div><div class="tile-sub">Running Now، درخت Blocking، Session Lookup</div><div class="tile-cta">باز کردن</div></button>
+        <button class="tile" data-view="insights"><div class="tile-ico"><i class="fas fa-lightbulb"></i></div><div class="tile-title">Insights</div><div class="tile-sub">چه چیزی امروز مهم بود (Metric Store)</div><div class="tile-cta">باز کردن</div></button>
+        <button class="tile" data-view="tables"><div class="tile-ico"><i class="fas fa-table"></i></div><div class="tile-title">Tables & Growth</div><div class="tile-sub">فضا، Heap، رشد تاریخی</div><div class="tile-cta">باز کردن</div></button>
+        <button class="tile" data-view="indexes"><div class="tile-ico"><i class="fas fa-list-ol"></i></div><div class="tile-title">Indexes</div><div class="tile-sub">Overview KPI + Explorer + confidence gate</div><div class="tile-cta">باز کردن</div></button>
+        <button class="tile" data-view="docs"><div class="tile-ico"><i class="fas fa-book"></i></div><div class="tile-title">Docs</div><div class="tile-sub">واژه‌نامه و راهنمای داخل اپ</div><div class="tile-cta">باز کردن</div></button>
+        <button class="tile soon" disabled><div class="tile-ico"><i class="fas fa-hard-drive"></i></div><div class="tile-title">Disk & DB Health</div><div class="tile-sub">فایل‌ها، فضای آزاد، بکاپ</div><div class="tile-cta">به زودی</div></button>
+        <button class="tile" data-view="settings"><div class="tile-ico"><i class="fas fa-gear"></i></div><div class="tile-title">Settings</div><div class="tile-sub">اتصال، زبان، بازهٔ تازه‌سازی</div><div class="tile-cta">باز کردن</div></button>
+      </div>
+      <div class="note">Slice 0 — Shell + Home: توکن‌ها، ریل، هدر، toast بالا-راست، کاشی‌های Home بدون emoji.</div>
+    </section>
+
+    <!-- JOBS -->
+    <section class="view" id="view-jobs" data-title="جاب‌های Agent">
+      <div class="section-title">
+        <h2>Agent Jobs</h2>
+        <span class="slice-chip">Slice 1 · Jobs chrome</span>
+      </div>
+      <div class="tabs" data-tabs="jobs">
+        <button class="tab is-active" data-tab="running">Running Now</button>
+        <button class="tab" data-tab="all">All Jobs</button>
+        <button class="tab" data-tab="gantt">Gantt 24h</button>
+      </div>
+      <div class="grid grid-4" style="margin-bottom:14px">
+        <div class="kpi" style="--kpi:var(--accent)"><div class="kpi-label">Running</div><div class="kpi-value" style="color:var(--accent)">3</div><div class="kpi-sub">فعال روی instance</div></div>
+        <div class="kpi" style="--kpi:var(--success)"><div class="kpi-label">Succeeded (24h)</div><div class="kpi-value" style="color:var(--success)">128</div><div class="kpi-sub">بدون شکست بحرانی</div></div>
+        <div class="kpi" style="--kpi:var(--danger)"><div class="kpi-label">Failed (24h)</div><div class="kpi-value" style="color:var(--danger)">2</div><div class="kpi-sub">نیاز به بررسی</div></div>
+        <div class="kpi" style="--kpi:var(--warn)"><div class="kpi-label">Longest run</div><div class="kpi-value" style="color:var(--warn)">01:42:18</div><div class="kpi-sub">NightlyETL</div></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Job</th><th>Step</th><th>Status</th><th>Elapsed</th><th>Progress</th></tr></thead>
+          <tbody>
+            <tr><td>NightlyETL</td><td>3 / Load Facts</td><td><span class="badge badge-accent">Running</span></td><td class="mono">01:42:18</td><td><div class="progress"><span style="width:68%"></span></div></td></tr>
+            <tr><td>IndexRebuild_Selective</td><td>1 / Rebuild</td><td><span class="badge badge-accent">Running</span></td><td class="mono">00:22:04</td><td><div class="progress"><span style="width:41%"></span></div></td></tr>
+            <tr><td>Backup_UserDBs</td><td>2 / Verify</td><td><span class="badge badge-accent">Running</span></td><td class="mono">00:09:51</td><td><div class="progress"><span style="width:88%"></span></div></td></tr>
+            <tr><td>StatsUpdate_Hot</td><td>—</td><td><span class="badge badge-ok">Succeeded</span></td><td class="mono">00:04:12</td><td class="muted">—</td></tr>
+            <tr><td>MailQueue_Drain</td><td>—</td><td><span class="badge badge-bad">Failed</span></td><td class="mono">00:00:48</td><td class="muted">step 2</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">اعداد با <code>fmt_int</code> / <code>fmt_duration_hms</code>؛ toast فقط روی Refresh دستی.</div>
+    </section>
+
+    <!-- ACTIVITY -->
+    <section class="view" id="view-activity" data-title="مانیتور فعالیت">
+      <div class="section-title">
+        <h2>Activity Monitor</h2>
+        <span class="slice-chip">Slice 2 · Activity</span>
+      </div>
+      <div class="tabs" data-tabs="activity">
+        <button class="tab is-active" data-tab="act-run">Running Now</button>
+        <button class="tab" data-tab="act-block">Blocking</button>
+        <button class="tab" data-tab="act-lookup">Session Lookup</button>
+      </div>
+      <div class="grid grid-3" style="margin-bottom:14px">
+        <div class="kpi" style="--kpi:var(--accent)"><div class="kpi-label">Active sessions</div><div class="kpi-value">47</div><div class="kpi-sub">غیر سیستم</div></div>
+        <div class="kpi" style="--kpi:var(--danger)"><div class="kpi-label">Blocked</div><div class="kpi-value" style="color:var(--danger)">6</div><div class="kpi-sub">۲ درخت</div></div>
+        <div class="kpi" style="--kpi:var(--warn)"><div class="kpi-label">Longest wait</div><div class="kpi-value" style="color:var(--warn)">00:12:41</div><div class="kpi-sub">LCK_M_X</div></div>
+      </div>
+      <div class="grid grid-2">
+        <div class="card stack">
+          <div class="row" style="justify-content:space-between">
+            <strong>Blocking trees</strong>
+            <span class="badge badge-bad">blast · 6 victims</span>
+          </div>
+          <div class="tree">
+            <div class="tree-node is-blocker">
+              <div class="row" style="justify-content:space-between">
+                <span><strong class="mono">spid 72</strong> · APP_ETL · <span class="badge badge-warn">Head blocker</span></span>
+                <span class="mono muted">00:12:41</span>
+              </div>
+              <div class="muted" style="font-size:12px;margin-top:6px">wait_resource → DB.dbo.Orders (resolved)</div>
+              <div class="tree-kids">
+                <div class="tree-node"><span class="mono">spid 88</span> · blocked · LCK_M_S</div>
+                <div class="tree-node"><span class="mono">spid 91</span> · blocked · LCK_M_S
+                  <div class="tree-kids"><div class="tree-node"><span class="mono">spid 104</span> · nested</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card stack">
+          <strong>Session Lookup</strong>
+          <div class="row">
+            <div class="field"><label>Session Id</label><input value="72" /></div>
+            <button class="btn btn-primary" style="align-self:end">Lookup</button>
+          </div>
+          <div class="empty" style="padding:20px">جزئیات session، SQL text، waits — بدون XE / PRINT history.</div>
+        </div>
+      </div>
+      <div class="note">Loading مرکزی هنگام تعویض تب؛ soft-fail permission با hint واضح.</div>
+    </section>
+
+    <!-- INSIGHTS -->
+    <section class="view" id="view-insights" data-title="بینش امروز">
+      <div class="section-title">
+        <h2>Today's Insights</h2>
+        <span class="slice-chip">Slice 3 · Insights</span>
+      </div>
+      <div class="grid grid-2">
+        <div class="card stack">
+          <div class="row" style="justify-content:space-between">
+            <strong>Job Failed</strong>
+            <span class="badge badge-bad">Critical</span>
+          </div>
+          <p style="font-size:14px;line-height:1.7;color:var(--text-secondary)">
+            جاب <strong style="color:var(--text-primary)">MailQueue_Drain</strong> دو بار از ساعت ۱۴:۱۰ شکست خورده.
+            از کی: ~۳ ساعت. اقدام: باز کردن Jobs → جزئیات step.
+          </p>
+          <button class="btn">رفتن به Jobs</button>
+        </div>
+        <div class="card stack">
+          <div class="row" style="justify-content:space-between">
+            <strong>Blocking spike</strong>
+            <span class="badge badge-warn">Important</span>
+          </div>
+          <p style="font-size:14px;line-height:1.7;color:var(--text-secondary)">
+            درخت بلاکینگ با ۶ victim بیش از آستانهٔ محافظه‌کار Metric Store.
+            لینک مستقیم به Activity → Blocking.
+          </p>
+          <button class="btn">رفتن به Activity</button>
+        </div>
+      </div>
+      <div class="note" style="margin-top:14px">Insights فقط از Metric Store؛ تکرار Live Monitor ممنوع. بدون ایمیل در این slice.</div>
+    </section>
+
+    <!-- TABLES -->
+    <section class="view" id="view-tables" data-title="جداول و رشد">
+      <div class="section-title">
+        <h2>Tables & Growth</h2>
+        <span class="slice-chip">Slice 4 · Tables</span>
+      </div>
+      <div class="grid grid-4" style="margin-bottom:14px">
+        <div class="kpi" style="--kpi:var(--accent)"><div class="kpi-label">Tables scanned</div><div class="kpi-value">1,842</div><div class="kpi-sub">user DBs</div></div>
+        <div class="kpi" style="--kpi:var(--warn)"><div class="kpi-label">Heaps</div><div class="kpi-value" style="color:var(--warn)">37</div><div class="kpi-sub">بدون clustered</div></div>
+        <div class="kpi" style="--kpi:var(--accent)"><div class="kpi-label">Top table</div><div class="kpi-value" style="font-size:18px">FactSales</div><div class="kpi-sub">86.4 GB</div></div>
+        <div class="kpi" style="--kpi:var(--success)"><div class="kpi-label">7d growth</div><div class="kpi-value" style="color:var(--success)">+2.1%</div><div class="kpi-sub">ObjSize history</div></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Database</th><th>Table</th><th>Size</th><th>Rows</th><th>Δ 7d</th><th>Flags</th></tr></thead>
+          <tbody>
+            <tr><td>RasBank…</td><td>dbo.FactSales</td><td class="mono">86.4 GB</td><td class="mono">412,881,204</td><td class="mono">+1.8 GB</td><td><span class="badge badge-idle">Clustered</span></td></tr>
+            <tr><td>RasBank…</td><td>dbo.StagingRaw</td><td class="mono">12.1 GB</td><td class="mono">9,221,004</td><td class="mono">+420 MB</td><td><span class="badge badge-warn">Heap</span></td></tr>
+            <tr><td>Ops</td><td>dbo.AuditLog</td><td class="mono">4.6 GB</td><td class="mono">28,110,992</td><td class="mono">+90 MB</td><td><span class="badge badge-idle">Clustered</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- INDEXES -->
+    <section class="view" id="view-indexes" data-title="ایندکس‌ها">
+      <div class="section-title">
+        <h2>Indexes</h2>
+        <span class="slice-chip">Slice 5 · Indexes A/B</span>
+      </div>
+      <div class="tabs" data-tabs="indexes">
+        <button class="tab is-active" data-tab="idx-ov">Overview</button>
+        <button class="tab" data-tab="idx-ex">Explorer</button>
+      </div>
+      <div class="row" style="margin-bottom:12px">
+        <span class="badge badge-accent">Source · Advisor</span>
+        <span class="muted" style="font-size:12px">captured 2026-11-16 18:40 · uptime ~142h · Primary · freshness ≤ 90m</span>
+      </div>
+      <div class="grid grid-4" style="margin-bottom:14px">
+        <div class="kpi" style="--kpi:var(--success)"><div class="kpi-label">Missing index impact</div><div class="kpi-value">48,210</div><div class="kpi-sub">sum improvement · 12 hints</div></div>
+        <div class="kpi" style="--kpi:var(--warn)"><div class="kpi-label">High frag (&gt;30%)</div><div class="kpi-value">—</div><div class="kpi-sub">frag not in Phase 1 capture</div></div>
+        <div class="kpi" style="--kpi:var(--warn)"><div class="kpi-label">Dead unused writes</div><div class="kpi-value">19</div><div class="kpi-sub">unused NC + writes</div></div>
+        <div class="kpi" style="--kpi:var(--text-secondary)"><div class="kpi-label">Duplicate indexes</div><div class="kpi-value">7</div><div class="kpi-sub">not consolidation</div></div>
+      </div>
+      <div class="grid grid-2">
+        <div class="card stack">
+          <strong>Recommendation (confidence ≥ 70)</strong>
+          <div class="row"><span class="badge badge-ok">Score 82</span><span class="badge badge-idle">Unused</span><span class="badge badge-warn">Write-heavy</span></div>
+          <div class="code">CREATE NONCLUSTERED INDEX IX_Orders_CustomerId
+ON dbo.Orders (CustomerId)
+INCLUDE (OrderDate, Status)
+WITH (ONLINE = ON, FILLFACTOR = 90);
+-- DROP review copy only — never auto-executed</div>
+          <button class="btn btn-primary"><i class="fas fa-copy"></i> Copy T-SQL</button>
+        </div>
+        <div class="card stack">
+          <strong>Gated (&lt; 70)</strong>
+          <div class="row"><span class="badge badge-bad">Score 54</span><span class="badge badge-idle">Missing</span></div>
+          <p class="muted" style="font-size:13px;line-height:1.6">دلایل: uptime کوتاه، counters reset بعد از restart، پوشش آماری ضعیف. اسکریپت کپی نمی‌شود.</p>
+          <button class="btn" disabled>Copy disabled</button>
+        </div>
+      </div>
+      <div class="note">قفل‌ها: read-only، بدون Consolidation/Super Index، بدون emoji tag، schema insight.</div>
+    </section>
+
+    <!-- DOCS -->
+    <section class="view" id="view-docs" data-title="مستندات">
+      <div class="section-title">
+        <h2>Documentation</h2>
+        <span class="slice-chip">Slice 6 · Docs</span>
+      </div>
+      <div class="grid grid-3">
+        <div class="card stack"><strong>Status</strong><p class="muted" style="font-size:13px;line-height:1.6">Running / Succeeded / Failed / Idle — رنگ فقط برای وضعیت.</p></div>
+        <div class="card stack"><strong>Waits</strong><p class="muted" style="font-size:13px;line-height:1.6">wait_resource انسانی‌شده؛ بدون XE.</p></div>
+        <div class="card stack"><strong>Insights</strong><p class="muted" style="font-size:13px;line-height:1.6">تفاوت Live Monitor و Metric Store.</p></div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="view" id="view-settings" data-title="تنظیمات">
+      <div class="section-title">
+        <h2>Settings</h2>
+        <span class="slice-chip">Slice 6 · Settings</span>
+      </div>
+      <div class="card stack" style="max-width:720px">
+        <div class="grid grid-2">
+          <div class="field"><label>Server</label><input value="127.0.0.1" /></div>
+          <div class="field"><label>Auth</label><select><option>Windows</option><option>SQL Login</option></select></div>
+          <div class="field"><label>Locale</label><select><option>فارسی</option><option>English</option></select></div>
+          <div class="field"><label>Refresh (sec)</label><input value="15" /></div>
+        </div>
+        <div class="row">
+          <button class="btn btn-primary">Save</button>
+          <button class="btn">Test connection</button>
+        </div>
+        <p class="muted" style="font-size:12px">رمز در Credential Manager؛ نه در .env.</p>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const titles = {
+      home: "خانه",
+      jobs: "جاب‌های Agent",
+      activity: "مانیتور فعالیت",
+      insights: "بینش امروز",
+      tables: "جداول و رشد",
+      indexes: "ایندکس‌ها",
+      docs: "مستندات",
+      settings: "تنظیمات",
+    };
+
+    function showToast(text, spinning) {
+      const stack = document.getElementById("toasts");
+      const el = document.createElement("div");
+      el.className = "toast";
+      el.innerHTML = (spinning ? '<span class="spin"></span>' : '<i class="fas fa-check" style="color:var(--accent)"></i>') + text;
+      stack.appendChild(el);
+      setTimeout(() => el.remove(), spinning ? 1200 : 1800);
+    }
+
+    function setView(id) {
+      if (!titles[id]) return;
+      document.querySelectorAll(".view").forEach((v) => v.classList.toggle("is-active", v.id === "view-" + id));
+      document.querySelectorAll(".rail-item").forEach((b) => b.classList.toggle("is-active", b.dataset.view === id));
+      document.getElementById("header-sub").textContent = "SQL Server Monitor — " + titles[id];
+      history.replaceState(null, "", "#" + id);
+    }
+
+    document.getElementById("rail").addEventListener("click", (e) => {
+      const btn = e.target.closest(".rail-item");
+      if (!btn || btn.disabled) return;
+      setView(btn.dataset.view);
+    });
+    document.getElementById("home-tiles").addEventListener("click", (e) => {
+      const tile = e.target.closest(".tile[data-view]");
+      if (!tile) return;
+      setView(tile.dataset.view);
+    });
+    document.getElementById("btn-refresh").addEventListener("click", () => {
+      showToast("Refreshing…", true);
+      setTimeout(() => showToast("Updated", false), 700);
+    });
+    document.getElementById("btn-pause").addEventListener("click", (e) => {
+      const on = e.currentTarget.dataset.on === "1";
+      e.currentTarget.dataset.on = on ? "0" : "1";
+      e.currentTarget.innerHTML = on
+        ? '<i class="fas fa-pause"></i> Pause'
+        : '<i class="fas fa-play"></i> Resume';
+      showToast(on ? "Resumed" : "Paused", false);
+    });
+
+    document.querySelectorAll("[data-tabs]").forEach((bar) => {
+      bar.addEventListener("click", (e) => {
+        const tab = e.target.closest(".tab");
+        if (!tab) return;
+        bar.querySelectorAll(".tab").forEach((t) => t.classList.toggle("is-active", t === tab));
+      });
+    });
+
+    const hash = (location.hash || "#home").slice(1);
+    if (titles[hash]) setView(hash);
+  </script>
+</body>
+</html>

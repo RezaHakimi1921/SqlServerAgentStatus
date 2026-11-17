@@ -1,0 +1,312 @@
+/* Dash-specific bridges on top of figma-theme.css (Figma Make visual system). */
+
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0);
+  white-space: nowrap; border: 0;
+}
+
+/* Topbar live state */
+.live-pill .live-dot,
+.live-indicator .live-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--green, #0c7c59);
+  display: inline-block;
+  box-shadow: 0 0 0 0 rgba(12,124,89,0.45);
+  animation: livePulse 1.6s infinite;
+}
+.live-pill.paused .live-dot,
+.live-indicator.paused .live-dot {
+  background: var(--amber, #d98b1b);
+  animation: none;
+}
+@keyframes livePulse {
+  0% { box-shadow: 0 0 0 0 rgba(12,124,89,0.4); }
+  70% { box-shadow: 0 0 0 8px rgba(12,124,89,0); }
+  100% { box-shadow: 0 0 0 0 rgba(12,124,89,0); }
+}
+
+.app-version-badge {
+  margin-inline-start: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted, #6d7d76);
+  border: 1px solid var(--line, #e4ebe7);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: #fff;
+}
+
+/* Jobs rows as Figma table rows */
+.jobs-container {
+  background: #fff;
+}
+.jobs-header {
+  display: grid;
+  grid-template-columns: minmax(220px, 2.2fr) 120px 160px 110px 120px 48px;
+  gap: 8px;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 15px;
+  color: #8a9992;
+  background: #fafbfa;
+  font-size: 11px;
+  font-weight: 600;
+  border-bottom: 1px solid #edf1ef;
+}
+.job-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 2.2fr) 120px 160px 110px 120px 48px;
+  gap: 8px;
+  align-items: center;
+  min-height: 59px;
+  padding: 8px 15px;
+  border-top: 1px solid #f0f3f1;
+  color: #596a62;
+  background: #fff;
+  cursor: default;
+  transition: background 0.15s ease;
+}
+.job-row:hover { background: #fafcfb; }
+.job-error-line {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--red, #dc4b4b);
+}
+.progress-bar-wrapper {
+  height: 6px;
+  border-radius: 999px;
+  background: #eef3f0;
+  overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--green, #0c7c59);
+}
+.progress-bar-fill.running { background: linear-gradient(90deg, #0c7c59, #35a77f); }
+.progress-bar-fill.failed,
+.progress-bar-fill.error { background: var(--red, #dc4b4b); }
+.progress-bar-fill.success { background: #28a77b; }
+.progress-text { font-size: 11px; color: var(--muted, #6d7d76); margin-inline-start: 6px; }
+
+.filter-tab {
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #6d7d76;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.filter-tab.active {
+  color: #197354;
+  background: #eaf6f1;
+}
+.filter-tab .count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 17px;
+  height: 16px;
+  margin-inline-end: 4px;
+  border-radius: 5px;
+  background: rgba(0,0,0,0.05);
+  font-size: 10px;
+}
+
+.pagination-bar,
+.table-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid #edf1ef;
+  background: #fcfdfc;
+  color: var(--muted, #6d7d76);
+  font-size: 12px;
+}
+.page-btn {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--line, #e4ebe7);
+  background: #fff;
+  color: #31443c;
+  cursor: pointer;
+}
+.page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Module panels on light canvas */
+#app-shell .module-panel {
+  background: transparent;
+  color: #17241f;
+}
+#app-shell .card,
+#app-shell .idx-kpi-card,
+#app-shell .insight-card,
+#app-shell .activity-shell,
+#app-shell .settings-card,
+#app-shell .neon-card,
+#app-shell .home-tile {
+  background: #fff !important;
+  border: 1px solid var(--line, #e4ebe7) !important;
+  color: #17241f !important;
+  box-shadow: 0 2px 7px rgba(31, 60, 48, 0.025);
+}
+#app-shell .activity-toolbar,
+#app-shell .jobs-toolbar:not(.jobs-toolbar-inline) {
+  background: #fff;
+  border: 1px solid var(--line, #e4ebe7);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+#app-shell .jobs-toolbar-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+#app-shell .jobs-toolbar-inline .activity-chip-row {
+  display: flex;
+  gap: 4px;
+}
+.home-jobs-preview {
+  padding: 28px 18px 32px;
+}
+.home-jobs-preview .empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  color: #74837d;
+}
+.home-jobs-preview .empty-state b {
+  color: #15231e;
+  font-size: 14px;
+}
+.home-jobs-preview .empty-state .button {
+  margin-top: 10px;
+}
+.home-extra {
+  margin-top: 22px;
+}
+.home-extra-label {
+  color: #86958f !important;
+  padding: 0 0 10px !important;
+}
+.home-spark-placeholder {
+  height: 30px;
+  opacity: 0.35;
+  background: linear-gradient(90deg, transparent, #d9ebe4, transparent);
+  border-radius: 8px;
+}
+.home-shell .stat-card .rail-ico {
+  width: 18px;
+  height: 18px;
+}
+#app-shell .activity-tab,
+#app-shell .activity-chip,
+#app-shell .activity-ctrl-btn {
+  border-color: var(--line, #e4ebe7);
+  background: #fbfcfb;
+  color: #31443c;
+}
+#app-shell .activity-tab.active,
+#app-shell .activity-chip.active {
+  background: #eaf6f1;
+  color: #197354;
+  border-color: #9ad6c0;
+}
+
+/* Indexes / insights text on light */
+#app-shell .idx-overview-source-label {
+  color: var(--green, #0c7c59);
+  background: var(--green-light, #e6f5ef);
+  border-color: rgba(12,124,89,0.22);
+}
+#app-shell .idx-kpi-value,
+#app-shell .idx-kpi-label,
+#app-shell h2, #app-shell h3 {
+  color: #14231e;
+}
+#app-shell .muted,
+#app-shell .idx-kpi-sub {
+  color: var(--muted, #6d7d76) !important;
+}
+
+/* Gantt shell on light */
+.gantt-shell.workspace-card {
+  margin-top: 12px;
+  overflow: hidden;
+}
+.gantt-shell .gantt-toolbar {
+  border-bottom: 1px solid #edf1ef;
+}
+.gantt-filter-chip {
+  border: 1px solid var(--line, #e4ebe7);
+  background: #fff;
+  color: #596a62;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.gantt-filter-chip.active {
+  background: #eaf6f1;
+  color: #197354;
+  border-color: #9ad6c0;
+}
+
+/* Loading spinner accent */
+.activity-loading-spinner,
+.app-splash-spinner,
+._dash-loading {
+  border-top-color: var(--green, #0c7c59) !important;
+}
+#loading-main ._dash-loading-callback {
+  color: var(--green, #0c7c59);
+}
+
+/* Modal / drawers on light */
+.modal-overlay .modal,
+.modal-overlay .modal-card {
+  background: #fff;
+  color: #17241f;
+  border: 1px solid var(--line, #e4ebe7);
+  box-shadow: 0 25px 80px rgba(0,0,0,0.18);
+}
+
+/* Toast: product rule = top-right, account for sidebar */
+.toast-stack {
+  position: fixed !important;
+  top: 16px !important;
+  right: calc(16px + var(--sidebar, 254px)) !important;
+  left: auto !important;
+  bottom: auto !important;
+  z-index: 80 !important;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+body:has(.app-shell.is-rail-collapsed) .toast-stack {
+  right: calc(16px + 72px) !important;
+}
+.toast-stack .toast,
+.jobs-toast {
+  background: #fff;
+  border: 1px solid var(--line, #e4ebe7);
+  color: #17241f;
+  box-shadow: 0 10px 35px rgba(20,35,30,0.12);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+}
