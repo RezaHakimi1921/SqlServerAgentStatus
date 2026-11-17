@@ -435,20 +435,20 @@ function App() {
                   ? "فهرست جاب‌ها"
                   : activeNav === "activity"
                     ? "مانیتورینگ Activity و Sessionها"
-                  : activeNav === "health"
-                    ? "مدیریت سرورها"
-                    : activeNav === "timeline"
-                      ? "خط زمانی اجراها"
-                      : "صبح بخیر، رضا"}
+                    : activeNav === "health"
+                      ? "مدیریت سرورها"
+                      : activeNav === "timeline"
+                        ? "خط زمانی اجراها"
+                        : "صبح بخیر، رضا"}
               </h1>
               <p>
                 {activeNav === "activity"
                   ? "درخواست‌های جاری، Waitها، Blocking و Sessionهای SQL Server را لحظه‌ای بررسی کنید."
                   : activeNav === "health"
-                  ? "سلامت، دسترس‌پذیری و تازگی داده تمام SQL Serverها را مدیریت کنید."
-                  : activeNav === "timeline"
-                    ? "برنامه و اجرای واقعی Jobها را در طول روز مقایسه کنید."
-                    : "وضعیت SQL Server Agentهای شما در یک نگاه؛ همه‌چیز تحت کنترل است."}
+                    ? "سلامت، دسترس‌پذیری و تازگی داده تمام SQL Serverها را مدیریت کنید."
+                    : activeNav === "timeline"
+                      ? "برنامه و اجرای واقعی Jobها را در طول روز مقایسه کنید."
+                      : "وضعیت SQL Server Agentهای شما در یک نگاه؛ همه‌چیز تحت کنترل است."}
               </p>
             </div>
             <div className="heading-actions">

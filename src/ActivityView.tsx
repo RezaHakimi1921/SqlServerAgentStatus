@@ -399,7 +399,10 @@ export default function ActivityView() {
                             </span>
                           </td>
                           <td>
-                            <button className="row-action" aria-label={`جزئیات Session ${session.id}`}>
+                            <button
+                              className="row-action"
+                              aria-label={`جزئیات Session ${session.id}`}
+                            >
                               <Glyph name="chevron" />
                             </button>
                           </td>
