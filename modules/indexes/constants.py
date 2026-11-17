@@ -10,6 +10,8 @@ INDEX_HIGH_FRAG_PCT = 30.0
 INDEX_HIGH_FRAG_MIN_PAGES = 1000
 INDEX_FRAG_QUERY_TIMEOUT_SEC = 5
 INDEX_SNAPSHOT_QUERY_TIMEOUT_SEC = 15
+# Show copyable T-SQL only when confidence score is at least this
+INDEX_CONFIDENCE_SCRIPT_MIN = 70
 
 INDEX_PREFERRED_DATABASE = "RasBankAccountingCloud"
 # Explorer DB picker sentinel — all catalog databases
@@ -22,12 +24,16 @@ INDEX_TABLE_SEARCH_CAP = 30
 INDEX_TABLE_LIST_CAP = 0
 # Prefetch all tables for selected DB (catalog-backed typeahead)
 INDEX_TABLE_CACHE_CAP = 20000
+INDEX_EXPLORER_PAGE_SIZE = 25
 
 # Overview environment scan caps (finding-oriented, not full inventory)
 INDEX_OVERVIEW_QUICK_MAX_DATABASES = 2  # preferred DB first — fast path
 INDEX_OVERVIEW_MAX_DATABASES = 15       # deep scan
 INDEX_OVERVIEW_FINDING_ROWS = 15
 INDEX_OVERVIEW_DB_TIMEOUT_SEC = 8
+
+# Advisor Overview: max age of latest successful CollectionRun (spec §7.2)
+INDEX_ADVISOR_FRESHNESS_MINUTES = 90
 
 INDEX_INVENTORY_MAX_ROWS = 5000
 INDEX_INVENTORY_MAX_MS = 3000

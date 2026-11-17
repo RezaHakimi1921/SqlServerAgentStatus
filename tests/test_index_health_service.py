@@ -1,11 +1,13 @@
 """Index health service unit tests (Tasks 1–3)."""
 from modules.indexes.constants import (
     INDEX_CAP_MISSING,
+    INDEX_CONFIDENCE_SCRIPT_MIN,
     INDEX_WRITE_HEAVY_MIN_WRITES,
     INDEX_WRITE_HEAVY_MIN_DIFF,
     INDEX_WRITE_HEAVY_MIN_RATIO,
 )
 from modules.indexes.service import (
+    _gated_scripts,
     assign_confidence,
     build_disable_drop_script,
     build_index_health,
@@ -47,22 +49,26 @@ def test_mutual_exclusion():
 
 
 def test_duplicate_heap_always_high():
-    c, _ = assign_confidence("duplicate", uptime_days=1)
+    c, _, score = assign_confidence("duplicate", uptime_days=1)
     assert c == "high"
-    c, _ = assign_confidence("heap", uptime_days=1)
+    assert score >= 70
+    c, _, score = assign_confidence("heap", uptime_days=1)
     assert c == "high"
+    assert score >= 70
 
 
 def test_unused_low_when_short_uptime():
-    c, reason = assign_confidence("unused", uptime_days=2, writes=1_000_000)
-    assert c == "low"
+    c, reason, score = assign_confidence("unused", uptime_days=2, writes=1_000_000)
+    assert c in ("low", "medium")
+    assert score < 70
     assert "restart" in reason.lower() or "2" in reason
 
 
 def test_missing_at_most_medium():
-    c, _ = assign_confidence("missing", uptime_days=30)
+    c, _, score = assign_confidence("missing", uptime_days=30)
     assert c in ("medium", "low")
     assert c != "high"
+    assert score < 70
 
 
 def test_exact_duplicate_group():
@@ -103,9 +109,13 @@ def test_exact_duplicate_group():
 
 def test_script_quotes_and_review_header():
     s = build_disable_drop_script("dbo", "My Table", "IX_x")
-    assert s.startswith("-- REVIEW ONLY")
+    assert "REVIEW ONLY" in s
     assert "[My Table]" in s or quotename("My Table") in s
     assert "DISABLE" in s and "DROP INDEX" in s
+    assert s.count("DROP INDEX") == 1
+    # DROP must stay commented until DBA validates DISABLE
+    assert "-- DROP INDEX" in s
+    assert "Uncomment DROP" in s
 
 
 # --- Task 3: build_index_health assembly ---
@@ -258,3 +268,15 @@ def test_build_caps_missing_before_needing_extra_tables():
     for f in out["findings"]:
         if f["category"] == "missing" and f["table_name"] == "T1":
             assert f["table_indexes"]
+
+
+def test_gated_scripts_blocks_below_70():
+    scripts, blocked = _gated_scripts(55, [{"label": "Copy", "tsql": "SELECT 1"}])
+    assert scripts == []
+    assert blocked and str(INDEX_CONFIDENCE_SCRIPT_MIN) in blocked
+
+
+def test_gated_scripts_allows_at_70():
+    scripts, blocked = _gated_scripts(70, [{"label": "Copy", "tsql": "SELECT 1"}])
+    assert len(scripts) == 1
+    assert blocked is None

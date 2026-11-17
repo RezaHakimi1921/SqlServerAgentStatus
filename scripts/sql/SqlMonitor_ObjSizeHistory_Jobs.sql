@@ -23,7 +23,7 @@ DECLARE @owner SYSNAME = SUSER_SNAME();
 
 DECLARE @step NVARCHAR(MAX) = N'
 USE ' + QUOTENAME(@monitor_db) + N';
-EXEC insight.USP_Insight_ObjSize_Capture @RetentionDays = 90;
+EXEC insight.USP_Insight_ObjSize_Capture @RetentionDays = 30;
 ';
 
 IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = @job_name)

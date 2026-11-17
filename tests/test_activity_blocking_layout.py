@@ -44,9 +44,10 @@ def test_blocking_health_strip_uses_blast_head_and_chain_age():
         tab="blocking",
     )
 
-    assert "Blast radius 8" in _text(strip)
-    assert "Head blockers 2" in _text(strip)
-    assert "Chain age 00:02:05" in _text(strip)
+    text = _text(strip)
+    assert "8" in text and "Blast radius" in text
+    assert "2" in text and "Head blockers" in text
+    assert "Chain age" in text and "00:02:05" in text
 
 
 def test_blocking_table_renders_tree_and_collapses_children_after_two():

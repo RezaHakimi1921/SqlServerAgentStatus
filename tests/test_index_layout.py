@@ -195,3 +195,141 @@ def test_render_explorer_recommendations_grouped():
     status = render_explorer(payload, selected=sel, view="status")
     assert advice is not None
     assert status is not None
+
+
+def test_heap_only_recommendation_group_opens():
+    """INVESTIGATE-only tables must not look empty (group auto-opens)."""
+    from modules.indexes.layout import render_explorer
+
+    payload = {
+        "database_name": "Rayanavard",
+        "schema_name": "dbo",
+        "table_name": "data_Facture",
+        "is_heap": True,
+        "table_meta": {"row_count": 386969, "size_mb": 23.7},
+        "health": {"indexes": 0, "health": "needs_optimization"},
+        "recommendations": [
+            {
+                "category": "INVESTIGATE",
+                "severity": "warn",
+                "problem": "dbo.data_Facture is a heap (no clustered index).",
+                "why": "Heaps can cause forwarding lookups.",
+                "evidence": {"heap": True},
+                "suggested_action": "Evaluate a clustered index.",
+                "risk": "Medium",
+                "scripts": [],
+            }
+        ],
+        "inventory": [],
+        "uptime": {"insufficient": False, "uptime_days": 40},
+    }
+    sel = {"database": "Rayanavard", "schema": "dbo", "table": "data_Facture"}
+    tree = render_explorer(payload, selected=sel, view="recommendations")
+    blob = str(tree)
+    assert "heap" in blob.lower()
+    assert "idx-ex-missing" in blob or "indexes-rec-group" in blob
+
+    status = render_explorer(payload, selected=sel, view="status")
+    status_blob = str(status)
+    assert "idx-ex-audit" in status_blob
+    assert "indexes-rec-group" not in status_blob
+
+
+def test_overview_has_four_v1_kpi_ids():
+    from modules.indexes.service import build_overview_payload
+    from modules.indexes.panels import render_overview
+
+    payload = build_overview_payload(
+        {
+            "sqlserver_start_time": "2026-01-01T00:00:00",
+            "totals": {
+                "indexes": 10,
+                "need_review": 1,
+                "unused": 1,
+                "write_heavy": 0,
+                "heaps": 0,
+                "missing_suggestions": 1,
+            },
+            "unused": [
+                {
+                    "writes": 10,
+                    "database_name": "D",
+                    "schema_name": "dbo",
+                    "table_name": "T",
+                    "index_name": "IX",
+                }
+            ],
+            "write_heavy": [],
+            "heaps": [],
+            "missing_by_table": [
+                {
+                    "impact_score": 100,
+                    "database_name": "D",
+                    "schema_name": "dbo",
+                    "table_name": "T",
+                }
+            ],
+            "frag_loaded": False,
+        }
+    )
+    tree = render_overview(payload, locale="en")
+    ids = _ids(tree)
+    assert "indexes-kpi-missing" in ids
+    assert "indexes-kpi-frag" in ids
+    assert "indexes-kpi-unused-writes" in ids
+    assert "indexes-kpi-duplicates" in ids
+    assert "indexes-ov-per-db" in ids
+    assert "indexes-ov-frag" in ids
+    assert "indexes-ov-waste" in ids
+
+
+def test_rec_card_hides_copy_below_confidence_gate():
+    from modules.indexes.layout import _rec_card
+
+    card = _rec_card(
+        {
+            "category": "REMOVE_CANDIDATE",
+            "problem": "low confidence unused",
+            "why": "short uptime",
+            "suggested_action": "wait",
+            "risk": "high",
+            "confidence_score": 40,
+            "confidence_reasons": ["uptime too short"],
+            "scripts": [{"label": "Copy", "tsql": "ALTER INDEX [IX] ON [dbo].[T] DISABLE;"}],
+        },
+        0,
+        locale="en",
+    )
+    ids = _ids(card)
+    assert not any("indexes-copy-btn" in str(x) for x in ids)
+    # Blocked reason / confidence should still surface
+    blob = str(card)
+    assert "40" in blob or "confidence" in blob.lower() or "Confidence" in blob
+
+
+def test_create_script_includes_confidence_and_with_options():
+    from modules.indexes.service import build_create_missing_script
+
+    s = build_create_missing_script(
+        "dbo",
+        "Orders",
+        "IX_Orders_Missing_1",
+        "[CustomerId]",
+        include_cols="[Amount]",
+        confidence_score=85,
+        reasons=["DMV hint", "30d uptime"],
+    )
+    assert "Confidence: 85/100" in s
+    assert "ONLINE = ON" in s
+    assert "FILLFACTOR = 85" in s
+    assert "REVIEW ONLY" in s
+    assert "DROP INDEX" not in s
+
+
+def test_frag_maintenance_script_bands():
+    from modules.indexes.service import build_frag_maintenance_script
+
+    reorg = build_frag_maintenance_script("dbo", "T", "IX_a", 18.0)
+    assert "REORGANIZE" in reorg and "REVIEW ONLY" in reorg
+    rebuild = build_frag_maintenance_script("dbo", "T", "IX_a", 42.0)
+    assert "REBUILD" in rebuild

@@ -1,0 +1,297 @@
+/*
+ * Loads LAST (zz-*) — forces Figma Make light theme over leftover dark module CSS.
+ * Path: SqlServerAgentStatus — product runtime Dash assets.
+ */
+
+html, body, #react-entry-point, ._dash-loading {
+  background: #f4f7f5 !important;
+  color: #18211d !important;
+}
+
+#app-shell.app-shell,
+.app-container.app-shell {
+  background: #f5f7f6 !important;
+  color: #17241f !important;
+  max-width: none !important;
+  padding: 0 !important;
+  padding-right: var(--sidebar, 254px) !important;
+}
+
+/* ── Activity: kill dark OLED cards/tables ───────────────────────── */
+#module-activity,
+#module-activity .activity-shell,
+#module-activity .module-panel {
+  background: transparent !important;
+  color: #17241f !important;
+}
+
+#module-activity .activity-toolbar,
+#module-activity .jobs-toolbar,
+#module-jobs .jobs-toolbar:not(.jobs-toolbar-inline) {
+  background: #fff !important;
+  border: 1px solid #e4ebe7 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 2px 7px rgba(31, 60, 48, 0.04) !important;
+}
+#module-jobs .jobs-toolbar-inline {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+#module-activity .activity-chip,
+#module-activity .activity-ctrl-btn,
+#module-activity .activity-tab,
+#module-jobs .activity-chip,
+#module-jobs .activity-ctrl-btn {
+  background: #fbfcfb !important;
+  border: 1px solid #e4ebe7 !important;
+  color: #31443c !important;
+  box-shadow: none !important;
+}
+#module-activity .activity-chip::before,
+#module-activity .activity-ctrl-btn::before,
+#module-activity .activity-tab::before,
+#module-activity .activity-chip::after,
+#module-activity .activity-ctrl-btn::after,
+#module-activity .activity-tab::after {
+  display: none !important;
+}
+#module-activity .activity-chip.active,
+#module-activity .activity-tab.active,
+#module-jobs .activity-chip.active {
+  background: #eaf6f1 !important;
+  color: #0c7c59 !important;
+  border-color: #9ad6c0 !important;
+}
+
+#module-activity .kpi-card,
+#module-activity .stat-card,
+#module-activity [class*="kpi"],
+#module-activity .running-kpi,
+#module-activity .activity-kpi,
+#module-activity .metric-card {
+  background: #fff !important;
+  border: 1px solid #e4ebe7 !important;
+  color: #18211d !important;
+  box-shadow: 0 2px 6px rgba(28, 50, 41, 0.04) !important;
+}
+
+#module-activity table,
+#module-activity .activity-table,
+#module-activity .running-table,
+#module-activity .data-table,
+#module-activity .blk-table,
+#module-activity .session-table {
+  background: #fff !important;
+  color: #596a62 !important;
+  border-color: #e4ebe7 !important;
+}
+#module-activity th {
+  background: #fafbfa !important;
+  color: #8a9992 !important;
+  border-color: #edf1ef !important;
+}
+#module-activity td {
+  background: #fff !important;
+  color: #596a62 !important;
+  border-color: #f0f3f1 !important;
+}
+#module-activity tr:hover td {
+  background: #fafcfb !important;
+}
+
+/* Kill neon / purple elapsed from old theme */
+#module-activity .elapsed,
+#module-activity .wait-time,
+#module-activity [class*="elapsed"],
+#module-activity .mono {
+  color: #0c7c59 !important;
+}
+#module-activity .longest-wait,
+#module-activity .kpi-value,
+#module-activity .stat-value {
+  color: #14231e !important;
+}
+
+#module-activity .tree-node,
+#module-activity .blk-node,
+#module-activity .blocking-card,
+#module-activity .session-card,
+#module-activity .empty-state,
+#module-activity .view-center-loading {
+  background: #fff !important;
+  border: 1px solid #e4ebe7 !important;
+  color: #495b53 !important;
+}
+
+/* ── Indexes / Tables / Insights / Docs / Settings ───────────────── */
+#module-indexes,
+#module-tables,
+#module-insights,
+#module-docs,
+#module-settings,
+#module-home {
+  color: #17241f !important;
+}
+
+#module-indexes .idx-kpi-card,
+#module-indexes .idx-overview-source,
+#module-tables .card,
+#module-insights .card,
+#module-insights .insight-card,
+#module-docs .card,
+#module-settings .card,
+#module-settings .settings-card,
+#module-home .home-tile {
+  background: #fff !important;
+  border: 1px solid #e4ebe7 !important;
+  color: #17241f !important;
+  box-shadow: 0 2px 7px rgba(31, 60, 48, 0.04) !important;
+}
+
+#module-indexes .idx-kpi-value,
+#module-indexes .idx-kpi-label,
+#module-home .home-tile-title,
+#module-home h1,
+#module-home h2 {
+  color: #14231e !important;
+}
+#module-indexes .idx-kpi-sub,
+#module-home .home-tile-sub,
+#module-home .eyebrow {
+  color: #6d7d76 !important;
+}
+
+/* Code / SQL buttons: green not teal neon */
+#module-activity .sql-btn,
+#module-activity button[title*="SQL"],
+#module-activity .action-btn {
+  background: #e6f5ef !important;
+  border: 1px solid rgba(12,124,89,0.25) !important;
+  color: #0c7c59 !important;
+}
+
+/* Splash */
+.app-splash {
+  background: #f4f7f5 !important;
+}
+.app-splash-card {
+  background: #fff !important;
+  border: 1px solid #e4ebe7 !important;
+  color: #17241f !important;
+}
+
+/* Hard kill remaining dark hex leftovers inside modules */
+#app-shell [style*="background: #0"],
+#app-shell [style*="background:#0"],
+#app-shell [style*="background: rgb(12"],
+#app-shell [style*="background:rgb(12"] {
+  /* inline dark styles rare; cards handled by classes above */
+}
+
+/* Activity deep overrides — class names from modules/activity + custom.css */
+#module-activity .session-profile-hero,
+#module-activity .session-lookup-bar,
+#module-activity .progress-stat,
+#module-activity .progress-stats,
+#module-activity .sql-batch-panel,
+#module-activity .sql-modal-rich,
+#module-activity .health-strip,
+#module-activity .blk-rail,
+#module-activity .blk-node,
+#module-activity .blocking-blast,
+#module-activity .run-now-card,
+#module-activity .activity-panel,
+#module-activity .panel-card {
+  background: #fff !important;
+  border: 1px solid #e4ebe7 !important;
+  box-shadow: 0 2px 8px rgba(31,60,48,0.05) !important;
+  color: #17241f !important;
+}
+#module-activity .sph-sub,
+#module-activity .sph-db,
+#module-activity .sph-kicker,
+#module-activity .activity-meta,
+#module-activity .activity-meta-lbl,
+#module-activity .activity-ctrl-label {
+  color: #6d7d76 !important;
+}
+#module-activity .sph-num,
+#module-activity .sph-wait,
+#module-activity .sph-login,
+#module-activity .progress-stat-val,
+#module-activity .cmd-text,
+#module-activity .wait-text {
+  color: #14231e !important;
+}
+#module-activity .status-pill {
+  background: #e6f5ef !important;
+  color: #0c7c59 !important;
+  border: 1px solid rgba(12,124,89,0.2) !important;
+}
+#module-activity .sql-ico-btn {
+  background: #e6f5ef !important;
+  border: 1px solid rgba(12,124,89,0.25) !important;
+  color: #0c7c59 !important;
+  border-radius: 999px !important;
+}
+#module-activity .activity-ctrl-btn.is-live { color: #0c7c59 !important; }
+#module-activity .activity-ctrl-btn.is-paused {
+  color: #dc4b4b !important;
+  border-color: rgba(220,75,75,0.35) !important;
+  background: #fff0f0 !important;
+}
+#module-activity .activity-ctrl-btn.is-refresh.is-active { color: #0c7c59 !important; }
+
+/* Old OLED rail leftovers if still present without .sidebar */
+.app-rail:not(.sidebar) {
+  background: #14231e !important;
+}
+
+/* Ensure home tiles Open CTA matches screenshot 2 */
+#module-home .home-tile-cta {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-top: 4px !important;
+  padding: 6px 12px !important;
+  border-radius: 999px !important;
+  background: #e6f5ef !important;
+  color: #0c7c59 !important;
+  font-weight: 700 !important;
+}
+#module-home .home-tile.soon .home-tile-cta {
+  background: #f0f3f1 !important;
+  color: #809089 !important;
+}
+
+#module-activity .session-profile-hero {
+  background: #fff !important;
+  background-image: none !important;
+  border-right: 4px solid #0c7c59 !important;
+}
+#module-activity .status-pill.st-running,
+#module-activity .status-pill.st-runnable {
+  background: #e6f5ef !important; color: #0c7c59 !important;
+}
+#module-activity .status-pill.st-suspended {
+  background: #fff7ea !important; color: #d98b1b !important;
+}
+#module-activity .status-pill.st-sleeping {
+  background: #eef2ff !important; color: #4f6bed !important;
+}
+#module-activity .status-pill.st-blocked {
+  background: #fff0f0 !important; color: #dc4b4b !important;
+}
+#module-activity .status-pill.st-other {
+  background: #f0f3f1 !important; color: #6d7d76 !important;
+}
+#module-activity .progress-stat.is-target .progress-stat-lbl,
+#module-activity .progress-stat.is-target .target-table-verb,
+#module-activity .progress-stat.is-target .target-table-val {
+  color: #0c7c59 !important;
+}
+#module-activity .sql-ico-btn:hover:not(:disabled) .sql-ico-code {
+  color: #075d45 !important;
+}

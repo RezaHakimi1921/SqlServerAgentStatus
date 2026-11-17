@@ -29,19 +29,27 @@ def _loading_shell():
 
 
 def _clock_label(ts) -> str:
-    """Short clock so each auto-refresh is obvious (HH:MM:SS)."""
+    """Short clock so each auto-refresh is obvious (HH:MM:SS, server-local)."""
     if isinstance(ts, datetime):
+        if ts.tzinfo is not None:
+            return ts.astimezone().strftime("%H:%M:%S")
         return ts.strftime("%H:%M:%S")
     raw = (str(ts) if ts not in (None, "") else "").strip()
-    if "T" in raw:
-        # 2026-08-01T15:34:35+03:30 → 15:34:35
+    if raw:
         try:
-            return raw.split("T", 1)[1][:8]
-        except Exception:
-            pass
-    if len(raw) >= 8 and raw[2] == ":" and raw[5] == ":":
-        return raw[:8]
-    return datetime.now().strftime("%H:%M:%S")
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.tzinfo is not None:
+                dt = dt.astimezone()
+            return dt.strftime("%H:%M:%S")
+        except (TypeError, ValueError):
+            if "T" in raw:
+                try:
+                    return raw.split("T", 1)[1][:8]
+                except Exception:
+                    pass
+            if len(raw) >= 8 and raw[2] == ":" and raw[5] == ":":
+                return raw[:8]
+    return datetime.now().astimezone().strftime("%H:%M:%S")
 
 
 def _activity_meta(tab: str, ts, rows) -> html.Div:
@@ -57,30 +65,10 @@ def _activity_meta(tab: str, ts, rows) -> html.Div:
 
 
 def register_activity_callbacks(app):
-    # Overlay ONLY for explicit user fetch — never on tab/module/WS.
-    # Tab switch already sets loading serverside; listening to store-activity-tab here
-    # races AFTER load_activity and can leave the spinner stuck forever.
-    app.clientside_callback(
-        """
-        function(n_refresh, n_lookup, n_submit) {
-            const ctx = dash_clientside.callback_context;
-            if (!ctx || !ctx.triggered || !ctx.triggered.length) {
-                return window.dash_clientside.no_update;
-            }
-            const id = (ctx.triggered[0].prop_id || '').split('.')[0];
-            if (id === 'btn-activity-refresh' || id === 'btn-session-lookup'
-                || id === 'input-session-id') {
-                return 'activity-loading';
-            }
-            return window.dash_clientside.no_update;
-        }
-        """,
-        Output("activity-loading", "className", allow_duplicate=True),
-        Input("btn-activity-refresh", "n_clicks"),
-        Input("btn-session-lookup", "n_clicks"),
-        Input("input-session-id", "n_submit"),
-        prevent_initial_call=True,
-    )
+    def _skip_activity(*, clear_loading: bool = True):
+        """no_update for data outputs; always clear overlay so it cannot stick."""
+        loading = "activity-loading hidden" if clear_loading else no_update
+        return (no_update,) * 8 + (loading,)
 
     @app.callback(
         Output("store-activity-tab", "data"),
@@ -108,11 +96,76 @@ def register_activity_callbacks(app):
         blk_cls = "activity-tab active" if tab == "blocking" else "activity-tab"
         look_cls = "activity-tab active" if tab == "lookup" else "activity-tab"
         bar_style = {"display": "flex"} if tab == "lookup" else {"display": "none"}
-        return tab, run_cls, blk_cls, look_cls, bar_style, "activity-loading"
+        return tab, run_cls, blk_cls, look_cls, bar_style, no_update
 
     @app.callback(
         Output("store-activity-tab", "data", allow_duplicate=True),
         Output("input-session-id", "value"),
+        Output("store-lookup-sid", "data", allow_duplicate=True),
+        Output("activity-tab-running", "className", allow_duplicate=True),
+        Output("activity-tab-blocking", "className", allow_duplicate=True),
+        Output("activity-tab-lookup", "className", allow_duplicate=True),
+        Output("session-lookup-bar", "style", allow_duplicate=True),
+        Output("activity-loading", "className", allow_duplicate=True),
+        Input("btn-session-lookup", "n_clicks"),
+        Input("input-session-id", "n_submit"),
+        State("input-session-id", "value"),
+        prevent_initial_call=True,
+    )
+    def open_lookup_from_manual(btn_lookup_clicks, n_submit, session_id_value):
+        triggered = ctx.triggered_id
+        if triggered not in ("btn-session-lookup", "input-session-id"):
+            return (no_update,) * 8
+        sid = str(session_id_value or "").strip()
+        if not sid:
+            return (no_update,) * 8
+        return (
+            "lookup",
+            sid,
+            sid,
+            "activity-tab",
+            "activity-tab",
+            "activity-tab active",
+            {"display": "flex"},
+            no_update,
+        )
+
+    @app.callback(
+        Output("store-activity-tab", "data", allow_duplicate=True),
+        Output("input-session-id", "value"),
+        Output("store-lookup-sid", "data", allow_duplicate=True),
+        Output("activity-tab-running", "className", allow_duplicate=True),
+        Output("activity-tab-blocking", "className", allow_duplicate=True),
+        Output("activity-tab-lookup", "className", allow_duplicate=True),
+        Output("session-lookup-bar", "style", allow_duplicate=True),
+        Output("activity-loading", "className", allow_duplicate=True),
+        Input({"type": "run-lookup-spid", "sid": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def open_lookup_from_running_spid(clicks):
+        triggered = ctx.triggered_id
+        if not isinstance(triggered, dict) or triggered.get("type") != "run-lookup-spid":
+            return (no_update,) * 8
+        if not any(clicks or []):
+            return (no_update,) * 8
+        sid = str(triggered.get("sid") or "").strip()
+        if not sid:
+            return (no_update,) * 8
+        return (
+            "lookup",
+            sid,
+            sid,
+            "activity-tab",
+            "activity-tab",
+            "activity-tab active",
+            {"display": "flex"},
+            no_update,
+        )
+
+    @app.callback(
+        Output("store-activity-tab", "data", allow_duplicate=True),
+        Output("input-session-id", "value"),
+        Output("store-lookup-sid", "data", allow_duplicate=True),
         Output("activity-tab-running", "className", allow_duplicate=True),
         Output("activity-tab-blocking", "className", allow_duplicate=True),
         Output("activity-tab-lookup", "className", allow_duplicate=True),
@@ -124,20 +177,21 @@ def register_activity_callbacks(app):
     def open_lookup_from_blocking_spid(clicks):
         triggered = ctx.triggered_id
         if not isinstance(triggered, dict) or triggered.get("type") != "blk-lookup-spid":
-            return (no_update,) * 7
+            return (no_update,) * 8
         if not any(clicks or []):
-            return (no_update,) * 7
+            return (no_update,) * 8
         sid = str(triggered.get("sid") or "").strip()
         if not sid:
-            return (no_update,) * 7
+            return (no_update,) * 8
         return (
             "lookup",
+            sid,
             sid,
             "activity-tab",
             "activity-tab",
             "activity-tab active",
             {"display": "flex"},
-            "activity-loading",
+            no_update,
         )
 
     @app.callback(
@@ -156,6 +210,7 @@ def register_activity_callbacks(app):
         Input("store-activity-tab", "data"),
         Input("btn-session-lookup", "n_clicks"),
         Input("input-session-id", "n_submit"),
+        Input("store-lookup-sid", "data"),
         Input("store-ws-activity-tick", "data"),
         State("store-paused", "data"),
         State("input-session-id", "value"),
@@ -164,41 +219,59 @@ def register_activity_callbacks(app):
         prevent_initial_call=False,
     )
     def load_activity(
-        n_refresh, n_int, module, tab, n_lookup, n_submit, ws_tick, paused, session_id, prev_lookup, pulse_series,
+        n_refresh, n_int, module, tab, n_lookup, n_submit, ws_tick, paused, session_id, lookup_sid, prev_lookup, pulse_series,
     ):
         if module != "activity":
-            return (no_update,) * 9
+            return _skip_activity()
 
         triggered = ctx.triggered_id
         if triggered in ("interval-activity", "store-ws-activity-tick") and paused:
-            return (no_update,) * 9
+            return _skip_activity()
+        # WS ticks every ~1.5s — honor user's interval chip instead of constant refresh.
+        if triggered == "store-ws-activity-tick":
+            return _skip_activity()
 
         tab = tab or "running"
+        sid_candidate = str(lookup_sid or session_id or "").strip()
+        if triggered in ("btn-session-lookup", "input-session-id", "store-lookup-sid") and sid_candidate:
+            tab = "lookup"
         store_run = store_blk = store_look = no_update
         store_pulse = no_update
 
         if tab == "lookup":
-            sid_raw = "" if session_id in (None, "") else str(session_id).strip()
+            sid_raw = sid_candidate
             # store-activity-tab: Blocking SPID → Lookup sets sid + tab together
-            should_fetch = triggered in (
+            requested = triggered in (
                 "btn-session-lookup",
                 "btn-activity-refresh",
                 "input-session-id",
-                "interval-activity",
-                "store-ws-activity-tick",
                 "store-activity-tab",
-            ) and sid_raw
+                "store-lookup-sid",
+                "interval-activity",
+            )
+            is_periodic = triggered in ("interval-activity", "store-ws-activity-tick")
+            # Refetch on manual actions + interval chip (10s/30s/60s) while a SessionId is set.
+            should_fetch = bool(sid_raw) and (
+                requested or (prev_lookup is None and not is_periodic)
+            )
             if should_fetch:
-                result = fetch_session_by_id(sid_raw)
+                try:
+                    result = fetch_session_by_id(sid_raw)
+                except Exception as ex:
+                    result = {
+                        "status": "error",
+                        "severity": "important",
+                        "summary": {},
+                        "rows": [],
+                        "meta": {"hint": str(ex), "row_count": 0, "capped": False},
+                    }
                 store_look = result
-            elif triggered == "store-activity-tab" and not prev_lookup:
-                result = None
             else:
                 result = prev_lookup
 
-            # Charts only while a SessionId is actively looked up
-            series = []
-            if sid_raw and result and result.get("status") == "ok" and (result.get("rows") or []):
+            # Charts only while a SessionId is actively looked up (refresh with session fetch)
+            series = list(pulse_series or [])
+            if sid_raw and should_fetch and result and result.get("status") == "ok" and (result.get("rows") or []):
                 try:
                     pulse = fetch_server_resource_pulse()
                 except Exception:
@@ -209,17 +282,52 @@ def register_activity_callbacks(app):
                 store_pulse = series
             elif not sid_raw:
                 store_pulse = []
+            else:
+                store_pulse = no_update
 
-            body = render_session_lookup(result, pulse_series=series)
-            summary = (result or {}).get("summary") or {}
-            severity = (result or {}).get("severity") or "healthy"
-            strip = render_health_strip(summary, severity, tab="lookup")
-            ts = (result or {}).get("timestamp") or datetime.now().isoformat(timespec="seconds")
-            rows = (result or {}).get("meta", {}).get("row_count", 0) if result else 0
-            meta = _activity_meta("lookup", ts, rows)
+            # Prevent store-activity-tab race from overwriting a just-rendered lookup
+            # with the empty "Enter a SessionId" state.
+            if (
+                triggered == "store-activity-tab"
+                and not prev_lookup
+                and not should_fetch
+                and not sid_raw
+            ):
+                body = no_update
+                strip = no_update
+                meta = no_update
+            else:
+                body = render_session_lookup(result, pulse_series=series)
+                summary = (result or {}).get("summary") or {}
+                severity = (result or {}).get("severity") or "healthy"
+                strip = render_health_strip(summary, severity, tab="lookup")
+                ts = (
+                    datetime.now().astimezone().isoformat(timespec="seconds")
+                    if should_fetch
+                    else (result or {}).get("timestamp")
+                    or datetime.now().astimezone().isoformat(timespec="seconds")
+                )
+                rows = (result or {}).get("meta", {}).get("row_count", 0) if result else 0
+                meta = _activity_meta("lookup", ts, rows)
         elif tab == "blocking":
-            # WS + interval both refresh blocking
-            result = fetch_blocking()
+            try:
+                if triggered == "btn-activity-refresh":
+                    result = fetch_blocking(top=200, resolve_wait_objects=True)
+                elif triggered in ("activity-tab-blocking", "store-activity-tab"):
+                    result = fetch_blocking(top=80, resolve_wait_objects=False)
+                elif triggered == "interval-activity":
+                    result = fetch_blocking(top=40, resolve_wait_objects=False)
+                else:
+                    result = fetch_blocking(top=80, resolve_wait_objects=False)
+            except Exception as ex:
+                result = {
+                    "status": "error",
+                    "severity": "important",
+                    "summary": {},
+                    "rows": [],
+                    "trees": [],
+                    "meta": {"hint": str(ex), "row_count": 0},
+                }
             body = render_blocking_table(result)
             store_blk = result
             strip = render_health_strip(

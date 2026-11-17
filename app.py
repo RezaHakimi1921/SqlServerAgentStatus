@@ -12,8 +12,10 @@ from flask import request
 
 from config import (
     is_configured, load_config, resolve_password, save_config,
-    save_refresh_minutes, test_connection,
+    save_locale, save_refresh_minutes, test_connection,
 )
+from core.i18n import DEFAULT_LOCALE, module_title, normalize_locale, t
+from modules.shell import build_app_rail
 from db import (
     get_running_jobs, get_dashboard_batch, get_jobs_lite,
     get_step_runs_grouped, get_job_step_definitions, invalidate_batch_cache,
@@ -87,12 +89,33 @@ def Ico(name, extra_class=""):
     cls = "ico" + (f" {extra_class}" if extra_class else "")
     return html.Span(ICONS.get(name, "•"), className=cls, **{"aria-hidden": "true"})
 
+_REALTIME_WS = False
+try:
+    import flask_socketio  # noqa: F401
+
+    _REALTIME_WS = True
+except ImportError:
+    pass
+
+_REALTIME_SCRIPT_BLOCK = (
+    """
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script>window.__SM_REALTIME_WS__ = true;</script>
+    <script src="/assets/activity_ws.js"></script>
+"""
+    if _REALTIME_WS
+    else "<script>window.__SM_REALTIME_WS__ = false;</script>"
+)
+
 app = dash.Dash(__name__, suppress_callback_exceptions=True, title="Data Agent Monitor")
 app.title = "Data Agent Monitor"
 
+_UI_LOCALE = normalize_locale(load_config().get("locale") or DEFAULT_LOCALE)
+_UI_DIR = "rtl" if _UI_LOCALE == "fa" else "ltr"
+
 app.index_string = """<!DOCTYPE html>
-<html lang="en" dir="rtl">
-<head>
+<html lang="__UI_LANG__" dir="__UI_DIR__">
+<head>""".replace("__UI_LANG__", _UI_LOCALE).replace("__UI_DIR__", _UI_DIR) + """
     {%metas%}
     <title>{%title%}</title>
     {%favicon%}
@@ -143,9 +166,8 @@ app.index_string = """<!DOCTYPE html>
     </div>
     {%app_entry%}
     <footer>{%config%}{%scripts%}{%renderer%}</footer>
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    __REALTIME_SCRIPTS__
     <script src="/assets/gantt.js"></script>
-    <script src="/assets/activity_ws.js"></script>
     <script>
       (function () {
         var boot = document.getElementById('boot-splash');
@@ -172,7 +194,7 @@ app.index_string = """<!DOCTYPE html>
       })();
     </script>
 </body>
-</html>"""
+</html>""".replace("__REALTIME_SCRIPTS__", _REALTIME_SCRIPT_BLOCK)
 
 
 def _serialize_rows(rows):
@@ -627,20 +649,24 @@ app.layout = html.Div([
     dcc.Store(id="store-data-loaded", data=False),
     dcc.Store(id="store-refresh-minutes", data=REFRESH_MINUTES),
     dcc.Store(id="store-module", data=("settings" if not is_configured() else "home")),
+    dcc.Store(id="store-locale", data=_UI_LOCALE),
+    dcc.Store(id="store-rail-collapsed", data=False),
     dcc.Store(id="store-jobs-phase", data="idle"),
     dcc.Store(id="store-insight-tick", data=0),
     dcc.Store(id="store-boot-bridge", data=0),
     dcc.Store(id="store-ws-activity-tick", data=None),
+    html.Div(id="locale-dir-sync", style={"display": "none"}),
     dcc.Interval(
         id="interval-refresh",
         interval=REFRESH_MINUTES * 60 * 1000,
         n_intervals=0,
+        disabled=True,  # Jobs-only; enabled by disable_intervals when module == jobs
     ),
     dcc.Interval(
         id="interval-insight",
         interval=tick_interval_ms(),
         n_intervals=0,
-        disabled=not collector_enabled(),
+        disabled=True,  # Enabled only on live modules via disable_intervals
     ),
 
     html.Div(
@@ -649,198 +675,228 @@ app.layout = html.Div([
         children=[
             html.Div(className="app-splash-card", children=[
                 html.Div(className="app-splash-spinner"),
-                html.H2("Data Agent Monitor"),
-                html.P("Starting application...", className="app-splash-title"),
-                html.P("Loading data from SQL Server", className="app-splash-sub"),
+                html.H2(t("app.name", _UI_LOCALE)),
+                html.P(t("app.starting", _UI_LOCALE), className="app-splash-title"),
+                html.P(t("app.loading_sql", _UI_LOCALE), className="app-splash-sub"),
             ]),
         ],
     ),
 
-    html.Div(className="app-container", children=[
-        html.Header(className="app-header animate-in", children=[
-            html.Div(className="header-right", children=[
+    html.Div(id="app-shell", className="app-container app-shell", children=[
+        html.Header(className="topbar app-header animate-in", children=[
+            html.Div(className="server-select header-right", children=[
                 html.Button(
                     html.Span("⌂", className="home-ico"),
                     id="btn-goto-home",
-                    className="header-btn home-btn",
+                    className="icon-button home-btn",
                     n_clicks=0,
-                    title="Home",
+                    title=t("nav.home", _UI_LOCALE),
                 ),
-                html.Div(Ico("db", "logo-ico"), className="logo-icon"),
-                html.Div(className="header-title", children=[
-                    html.Div(className="header-title-row", children=[
-                        html.H1("SQL Server Monitor"),
-                        html.Span(
-                            APP_VERSION_LABEL,
-                            className="app-version-badge",
-                            title="Application version",
-                        ),
-                    ]),
-                    html.Span(id="header-server-line", children=(
-                        f"Server: {_server_info.get('name') or '—'}  ·  "
-                        f"{'Connected' if _server_info.get('configured') else 'Not configured'}"
+                html.Div(Ico("db", "logo-ico"), className="logo-icon brand-mark"),
+                html.Div(children=[
+                    html.Small(
+                        id="header-module-label",
+                        className="header-module-label",
+                        children=t("header.scope", _UI_LOCALE),
+                    ),
+                    html.B(id="header-server-line", children=(
+                        f"{_server_info.get('name') or t('header.all_servers', _UI_LOCALE)} · "
+                        f"{t('header.connected', _UI_LOCALE) if _server_info.get('configured') else t('header.not_configured', _UI_LOCALE)}"
                     )),
                 ]),
-            ]),
-            html.Div(className="header-left", children=[
-                html.Div(id="header-module-label", className="header-module-label", children="Home"),
-                html.Div(id="live-indicator", className="live-indicator", children=[
-                    html.Div(className="live-dot"),
-                    "Live",
-                ]),
-                html.Button(
-                    [Ico("pause"), " Pause"],
-                    id="btn-pause", className="header-btn refresh-btn", n_clicks=0,
-                    title="Pause / resume auto-refresh",
+                html.Span(
+                    APP_VERSION_LABEL,
+                    id="chrome-app-version",
+                    className="app-version-badge",
+                    title=t("app.version", _UI_LOCALE),
                 ),
+                html.Span(t("app.name", _UI_LOCALE), id="chrome-app-title", className="sr-only"),
+            ]),
+            html.Div(className="topbar-actions header-left", children=[
+                html.Div(id="live-indicator", className="live-pill live-indicator", children=[
+                    html.Span(className="live-dot"),
+                    t("header.live", _UI_LOCALE),
+                ]),
                 html.Div(className="notif-wrap", children=[
                     html.Button(
                         [Ico("bell"), html.Span(id="notif-badge", className="notif-badge")],
-                        id="btn-notifications", className="header-btn notif-btn", n_clicks=0,
-                        title="Error notifications",
+                        id="btn-notifications", className="icon-button has-badge notif-btn", n_clicks=0,
+                        title=t("header.notifications", _UI_LOCALE),
                     ),
                 ]),
                 html.Button(
                     Ico("book"), id="btn-open-docs", n_clicks=0,
-                    className="header-btn", title="Documentation",
+                    className="icon-button", title=t("header.docs", _UI_LOCALE),
                 ),
                 html.Button(
                     Ico("cog"), id="btn-open-settings", n_clicks=0,
-                    className="header-btn", title="Settings",
+                    className="icon-button", title=t("header.settings", _UI_LOCALE),
                 ),
                 html.Button(
-                    [Ico("refresh"), " Refresh"],
-                    id="btn-refresh", className="header-btn refresh-btn", n_clicks=0,
+                    [Ico("pause"), " ", t("header.pause", _UI_LOCALE)],
+                    id="btn-pause", className="button secondary", n_clicks=0,
+                    title=t("header.pause", _UI_LOCALE),
+                ),
+                html.Button(
+                    [Ico("refresh"), " ", t("header.refresh", _UI_LOCALE)],
+                    id="btn-refresh", className="refresh-button button primary", n_clicks=0,
+                    title=t("header.refresh", _UI_LOCALE),
                 ),
             ]),
         ]),
 
         html.Div(id="module-home", className="module-panel" + (" active" if is_configured() else ""), children=[
-            build_home_layout(),
+            build_home_layout(_UI_LOCALE),
         ]),
 
         html.Div(id="module-activity", className="module-panel", children=[
-            build_activity_layout(),
+            build_activity_layout(_UI_LOCALE),
         ]),
 
         html.Div(id="module-insights", className="module-panel", children=[
-            build_insights_layout(),
+            build_insights_layout(_UI_LOCALE),
         ]),
 
         html.Div(id="module-indexes", className="module-panel", children=[
-            build_indexes_layout(),
+            build_indexes_layout(_UI_LOCALE),
         ]),
 
         html.Div(id="module-tables", className="module-panel", children=[
-            build_tables_layout(),
+            build_tables_layout(_UI_LOCALE),
         ]),
 
         html.Div(id="module-docs", className="module-panel", children=[
-            build_docs_layout(),
+            build_docs_layout(_UI_LOCALE),
         ]),
 
         html.Div(
             id="module-settings",
             className="module-panel" + ("" if is_configured() else " active"),
-            children=[build_settings_layout()],
+            children=[build_settings_layout(_UI_LOCALE)],
         ),
 
         html.Div(id="module-jobs", className="module-panel", children=[
         html.Div(id="error-banner"),
-
-        html.Div(id="jobs-toolbar", className="activity-toolbar jobs-toolbar", children=[
-            html.Div(className="activity-tabs", role="tablist", children=[
-                html.Button(
-                    [Ico("list"), " Jobs ",
-                     html.Span(id="main-tab-badge", className="tab-badge")],
-                    id={"type": "main-tab", "view": "list"},
-                    className="activity-tab active",
-                    n_clicks=0,
-                ),
-                html.Button(
-                    [Ico("gantt"), " Gantt"],
-                    id={"type": "main-tab", "view": "gantt"},
-                    className="activity-tab",
-                    n_clicks=0,
-                ),
-            ]),
-            html.Div(className="activity-controls", children=[
-                html.Div(className="activity-interval-group", children=[
-                    html.Span("Auto refresh", className="activity-ctrl-label"),
-                    html.Div(id="jobs-interval-chips", className="activity-chip-row", children=[
-                        html.Button("Off", id={"type": "jobs-interval-chip", "value": "0"},
-                                    className="activity-chip", n_clicks=0),
-                        html.Button("5s", id={"type": "jobs-interval-chip", "value": "5"},
-                                    className="activity-chip", n_clicks=0),
-                        html.Button("10s", id={"type": "jobs-interval-chip", "value": "10"},
-                                    className="activity-chip active", n_clicks=0),
-                        html.Button("30s", id={"type": "jobs-interval-chip", "value": "30"},
-                                    className="activity-chip", n_clicks=0),
-                        html.Button("60s", id={"type": "jobs-interval-chip", "value": "60"},
-                                    className="activity-chip", n_clicks=0),
-                    ]),
-                ]),
-                html.Button(
-                    [html.Span("⏸", className="ctrl-ico"), html.Span("Pause", className="ctrl-txt")],
-                    id="btn-jobs-pause",
-                    className="activity-ctrl-btn is-live",
-                    n_clicks=0,
-                    title="Pause auto refresh",
-                ),
-                html.Button(
-                    [html.Span("↻", className="ctrl-ico"), html.Span("Refresh", className="ctrl-txt")],
-                    id="btn-jobs-refresh",
-                    className="activity-ctrl-btn is-refresh",
-                    n_clicks=0,
-                    title="Refresh now",
-                ),
-            ]),
-        ]),
         dcc.Store(id="jobs-refresh-interval", data="10"),
 
         html.Div(id="list-panel", className="view-panel active", children=[
             dcc.Loading(
                 id="loading-main",
                 type="circle",
-                color="#3dd9b6",
+                color="#0c7c59",
                 parent_style={"minHeight": "320px"},
-                children=html.Div(className="list-panel-inner", children=[
-                    html.Section(id="stats-grid", className="stats-grid", **{"aria-label": "Status summary"}),
-                    html.Div(className="toolbar animate-in", children=[
-                        html.Div(id="filter-tabs", className="toolbar-right", role="tablist"),
-                        html.Div(className="toolbar-left", children=[
-                            html.Div(className="search-box", children=[
-                                Ico("search", "search-ico"),
-                                dcc.Input(id="search-input", className="search-input", type="text",
-                                          placeholder="Search job name...", debounce=True),
+                children=html.Div(className="list-panel-inner content", children=[
+                    html.Div(className="page-heading", children=[
+                        html.Div(children=[
+                            html.Div(className="eyebrow", children=t("jobs.eyebrow", _UI_LOCALE)),
+                            html.H1(t("jobs.page_title", _UI_LOCALE)),
+                            html.P(t("jobs.page_sub", _UI_LOCALE)),
+                        ]),
+                        html.Div(className="heading-actions", children=[
+                            html.Div(id="jobs-toolbar", className="jobs-toolbar jobs-toolbar-inline", children=[
+                                html.Div(id="jobs-interval-chips", className="activity-chip-row status-filters", children=[
+                                    html.Button("Off", id={"type": "jobs-interval-chip", "value": "0"},
+                                                className="activity-chip", n_clicks=0),
+                                    html.Button("5s", id={"type": "jobs-interval-chip", "value": "5"},
+                                                className="activity-chip", n_clicks=0),
+                                    html.Button("10s", id={"type": "jobs-interval-chip", "value": "10"},
+                                                className="activity-chip active", n_clicks=0),
+                                    html.Button("30s", id={"type": "jobs-interval-chip", "value": "30"},
+                                                className="activity-chip", n_clicks=0),
+                                    html.Button("60s", id={"type": "jobs-interval-chip", "value": "60"},
+                                                className="activity-chip", n_clicks=0),
+                                ]),
+                                html.Button(
+                                    [Ico("pause"), " ", t("header.pause", _UI_LOCALE)],
+                                    id="btn-jobs-pause",
+                                    className="button secondary",
+                                    n_clicks=0,
+                                    title=t("header.pause", _UI_LOCALE),
+                                ),
+                                html.Button(
+                                    [Ico("refresh"), " ", t("header.refresh", _UI_LOCALE)],
+                                    id="btn-jobs-refresh",
+                                    className="button primary",
+                                    n_clicks=0,
+                                    title=t("header.refresh", _UI_LOCALE),
+                                ),
                             ]),
                         ]),
                     ]),
-                    html.Main(className="jobs-container animate-in", **{"aria-label": "Job list"}, children=[
-                        html.Div(className="jobs-header", role="row", children=[
-                            html.Div("Job name", role="columnheader"),
-                            html.Div("Status", role="columnheader"),
-                            html.Div("Progress", role="columnheader"),
-                            html.Div("Duration", role="columnheader"),
-                            html.Div("Next run", role="columnheader"),
-                            html.Div(role="columnheader"),
-                        ]),
-                        html.Div(id="jobs-body", role="rowgroup", children=[
-                            html.Div(className="view-center-loading", children=[
-                                html.Div(className="activity-loading-spinner"),
-                                html.Div("Loading jobs…", className="view-center-loading-text"),
-                                html.Div("Fetching Agent job status & history", className="view-center-loading-sub"),
+                    html.Section(id="stats-grid", className="stats-grid", **{"aria-label": "Status summary"}),
+                    html.Section(className="workspace-card", children=[
+                        html.Div(className="section-head", children=[
+                            html.Div(children=[
+                                html.H2(t("jobs.workspace_title", _UI_LOCALE)),
+                                html.P(t("jobs.workspace_sub", _UI_LOCALE)),
+                            ]),
+                            html.Div(className="view-tabs", role="tablist", children=[
+                                html.Button(
+                                    [
+                                        Ico("list"),
+                                        " ",
+                                        html.Span(t("jobs.tab.list", _UI_LOCALE), id="jobs-tab-list-label"),
+                                        " ",
+                                        html.Span(id="main-tab-badge", className="tab-badge"),
+                                    ],
+                                    id={"type": "main-tab", "view": "list"},
+                                    className="active",
+                                    n_clicks=0,
+                                ),
+                                html.Button(
+                                    [
+                                        Ico("gantt"),
+                                        " ",
+                                        html.Span(t("jobs.tab.gantt", _UI_LOCALE), id="jobs-tab-gantt-label"),
+                                    ],
+                                    id={"type": "main-tab", "view": "gantt"},
+                                    n_clicks=0,
+                                ),
                             ]),
                         ]),
-                        html.Div(id="pagination-bar", className="pagination-bar"),
+                        html.Div(className="toolbar animate-in", children=[
+                            html.Div(id="filter-tabs", className="toolbar-right status-filters", role="tablist"),
+                            html.Div(className="toolbar-left toolbar-tools", children=[
+                                html.Div(className="search search-box", children=[
+                                    Ico("search", "search-ico"),
+                                    dcc.Input(
+                                        id="search-input",
+                                        className="search-input",
+                                        type="text",
+                                        placeholder=t("jobs.placeholder.search", _UI_LOCALE),
+                                        debounce=True,
+                                    ),
+                                ]),
+                            ]),
+                        ]),
+                        html.Div(className="table-scroll", children=[
+                            html.Main(className="jobs-container animate-in", **{"aria-label": "Job list"}, children=[
+                                html.Div(className="jobs-header", role="row", children=[
+                                    html.Div(t("jobs.col.name", _UI_LOCALE), role="columnheader"),
+                                    html.Div(t("jobs.col.status", _UI_LOCALE), role="columnheader"),
+                                    html.Div(t("jobs.col.progress", _UI_LOCALE), role="columnheader"),
+                                    html.Div(t("jobs.col.duration", _UI_LOCALE), role="columnheader"),
+                                    html.Div(t("jobs.col.next", _UI_LOCALE), role="columnheader"),
+                                    html.Div(role="columnheader"),
+                                ]),
+                                html.Div(id="jobs-body", role="rowgroup", children=[
+                                    html.Div(className="view-center-loading", children=[
+                                        html.Div(className="activity-loading-spinner"),
+                                        html.Div(t("jobs.loading", _UI_LOCALE), className="view-center-loading-text"),
+                                        html.Div(t("jobs.loading_sub", _UI_LOCALE), className="view-center-loading-sub"),
+                                    ]),
+                                ]),
+                                html.Div(id="pagination-bar", className="pagination-bar table-foot"),
+                            ]),
+                        ]),
                     ]),
                 ]),
             ),
         ]),
 
         html.Div(id="gantt-panel", className="view-panel", children=[
-            html.Div(className="gantt-wrapper", children=[
-                html.Div(className="gantt-toolbar", children=[
+            html.Div(className="gantt-wrapper gantt-shell workspace-card", children=[
+                html.Div(className="gantt-toolbar section-head", children=[
                     html.Div(className="gantt-toolbar-right", children=[
                         html.Button("All", id={"type": "gantt-filter", "filter": "all"},
                                     className="gantt-filter-chip active", n_clicks=0),
@@ -871,6 +927,16 @@ app.layout = html.Div([
         ]),
         ]),  # end module-jobs
 
+        html.Div(
+            id="app-rail-host",
+            children=[
+                build_app_rail(
+                    locale=_UI_LOCALE,
+                    collapsed=False,
+                    active=("settings" if not is_configured() else "home"),
+                )
+            ],
+        ),
     ]),
 
     # Toasts at app root so position:fixed is viewport-relative (not trapped by module animation)
@@ -1047,26 +1113,175 @@ app.layout = html.Div([
 # ── Module shell (Home / Jobs / Activity / Insights / Settings) ───────────────
 @app.callback(
     Output("store-module", "data"),
-    Input({"type": "home-tile", "module": ALL}, "n_clicks"),
+    Input({"type": "home-tile", "module": ALL, "slot": ALL}, "n_clicks"),
+    Input({"type": "rail-nav", "module": ALL}, "n_clicks"),
     Input("btn-goto-home", "n_clicks"),
     Input("btn-open-settings", "n_clicks"),
     Input("btn-open-docs", "n_clicks"),
     State("store-module", "data"),
     prevent_initial_call=True,
 )
-def switch_module(tile_clicks, home_click, settings_click, docs_click, current):
+def switch_module(tile_clicks, rail_clicks, home_click, settings_click, docs_click, current):
     triggered = ctx.triggered_id
+    if not ctx.triggered:
+        return dash.no_update
+    # Ignore remounts of pattern-matching buttons (value 0 / None after rail rebuild)
+    trig_val = ctx.triggered[0].get("value")
+    if trig_val in (None, 0) and triggered not in (
+        "btn-goto-home", "btn-open-settings", "btn-open-docs",
+    ):
+        return dash.no_update
     if triggered == "btn-goto-home":
         return "home"
     if triggered == "btn-open-settings":
         return "settings"
     if triggered == "btn-open-docs":
         return "docs"
-    if isinstance(triggered, dict) and triggered.get("type") == "home-tile":
+    if isinstance(triggered, dict) and triggered.get("type") in ("home-tile", "rail-nav"):
         mid = triggered.get("module")
+        if mid == "home":
+            return "home"
         if mid in ("jobs", "activity", "insights", "indexes", "tables", "docs", "settings"):
             return mid
     return dash.no_update
+
+
+@app.callback(
+    Output("store-rail-collapsed", "data"),
+    Input("btn-rail-toggle", "n_clicks"),
+    Input("store-module", "data"),
+    State("store-rail-collapsed", "data"),
+    prevent_initial_call=True,
+)
+def toggle_rail(n_clicks, module, collapsed):
+    """Collapse the menu when entering a module; Home expands it again."""
+    trig = ctx.triggered_id
+    if trig == "store-module":
+        return (module or "home") != "home"
+    if not n_clicks:
+        return dash.no_update
+    return not bool(collapsed)
+
+
+@app.callback(
+    Output("app-rail-host", "children"),
+    Output("app-shell", "className"),
+    Input("store-module", "data"),
+    Input("store-locale", "data"),
+    Input("store-rail-collapsed", "data"),
+)
+def sync_rail(module, locale, collapsed):
+    loc = normalize_locale(locale)
+    mid = module or "home"
+    collapsed = bool(collapsed)
+    return (
+        build_app_rail(locale=loc, collapsed=collapsed, active=mid),
+        "app-container app-shell" + (" is-rail-collapsed" if collapsed else ""),
+    )
+
+
+app.clientside_callback(
+    """
+    function(locale) {
+        var loc = (locale || 'en').toLowerCase();
+        var isFa = loc.indexOf('fa') === 0;
+        var html = document.documentElement;
+        html.lang = isFa ? 'fa' : 'en';
+        html.dir = isFa ? 'rtl' : 'ltr';
+        return '';
+    }
+    """,
+    Output("locale-dir-sync", "children"),
+    Input("store-locale", "data"),
+)
+
+
+@app.callback(
+    Output("store-locale", "data"),
+    Output("locale-message", "children"),
+    Output("locale-message", "className"),
+    Input({"type": "locale-chip", "value": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def change_locale(n_clicks):
+    triggered = ctx.triggered_id
+    if not isinstance(triggered, dict) or triggered.get("type") != "locale-chip":
+        return dash.no_update, dash.no_update, dash.no_update
+    if not any(n_clicks or []):
+        return dash.no_update, dash.no_update, dash.no_update
+    loc = save_locale(triggered.get("value") or "en")
+    return loc, t("settings.lang.saved", loc), "setup-message ok"
+
+
+@app.callback(
+    Output("module-home", "children"),
+    Output("module-settings", "children"),
+    Output("jobs-tab-list-label", "children"),
+    Output("jobs-tab-gantt-label", "children"),
+    Output("chrome-app-title", "children"),
+    Output("chrome-app-version", "title"),
+    Output("btn-goto-home", "title"),
+    Output("btn-pause", "title"),
+    Output("btn-pause", "children", allow_duplicate=True),
+    Output("btn-notifications", "title"),
+    Output("btn-open-docs", "title"),
+    Output("btn-open-settings", "title"),
+    Output("btn-refresh", "title"),
+    Output("btn-refresh", "children"),
+    Output("header-server-line", "children"),
+    # Indexes chrome only — never remount Indexes/Activity/Tables (wipes table cache)
+    Output("indexes-tab-overview", "children"),
+    Output("indexes-tab-explorer", "children"),
+    Output("btn-indexes-refresh", "children"),
+    Output("btn-indexes-catalog-refresh", "children"),
+    Output("indexes-rec-label", "children"),
+    Output("indexes-view-status", "children"),
+    Output("btn-indexes-load-frag", "children"),
+    Output("indexes-table-search", "placeholder"),
+    Output("indexes-loading-text", "children"),
+    Input("store-locale", "data"),
+    State("store-paused", "data"),
+    prevent_initial_call=True,
+)
+def apply_locale_chrome(locale, paused):
+    """Refresh chrome labels. Do NOT remount Activity/Indexes/Tables — that wipes stores."""
+    loc = normalize_locale(locale)
+    info = active_server_info()
+    server_line = (
+        f"{t('header.server', loc)}: {info.get('name') or '—'}  ·  "
+        f"{t('header.connected', loc) if info.get('configured') else t('header.not_configured', loc)}"
+    )
+    pause_children = (
+        [Ico("play"), " " + t("header.resume", loc)]
+        if paused else
+        [Ico("pause"), " " + t("header.pause", loc)]
+    )
+    return (
+        build_home_layout(loc),
+        build_settings_layout(loc),
+        t("jobs.tab.list", loc),
+        t("jobs.tab.gantt", loc),
+        t("app.name", loc),
+        t("app.version", loc),
+        t("nav.home", loc),
+        t("header.resume", loc) if paused else t("header.pause", loc),
+        pause_children,
+        t("header.notifications", loc),
+        t("header.docs", loc),
+        t("header.settings", loc),
+        t("header.refresh", loc),
+        [Ico("refresh"), " " + t("header.refresh", loc)],
+        server_line,
+        t("indexes.tab.overview", loc),
+        t("indexes.tab.explorer", loc),
+        t("header.refresh", loc),
+        t("indexes.btn.update_catalog", loc),
+        t("indexes.view.recommendations", loc),
+        t("indexes.view.status", loc),
+        t("indexes.btn.load_frag", loc),
+        t("indexes.placeholder.search", loc),
+        t("indexes.loading", loc),
+    )
 
 
 @app.callback(
@@ -1085,9 +1300,11 @@ def switch_module(tile_clicks, home_click, settings_click, docs_click, current):
     Output("btn-open-settings", "className"),
     Output("btn-open-docs", "className"),
     Input("store-module", "data"),
+    State("store-locale", "data"),
 )
-def show_module(module):
+def show_module(module, locale):
     module = module or "home"
+    loc = normalize_locale(locale)
     home_cls = "module-panel active" if module == "home" else "module-panel"
     jobs_cls = "module-panel active" if module == "jobs" else "module-panel"
     act_cls = "module-panel active" if module == "activity" else "module-panel"
@@ -1096,21 +1313,14 @@ def show_module(module):
     tbl_cls = "module-panel active" if module == "tables" else "module-panel"
     docs_cls = "module-panel active" if module == "docs" else "module-panel"
     set_cls = "module-panel active" if module == "settings" else "module-panel"
-    labels = {
-        "home": "Home",
-        "jobs": "Agent Jobs",
-        "activity": "Activity Monitor",
-        "insights": "Today's Insights",
-        "indexes": "Object Intelligence",
-        "tables": "Tables & Growth",
-        "docs": "Documentation",
-        "settings": "Settings",
-    }
+    if module in ("home", "settings"):
+        label = t("header.scope", loc)
+    else:
+        label = module_title(module, loc)
     chrome = {"display": "none"}
-    label = "" if module in ("home", "settings") else labels.get(module, module)
-    home_btn = "header-btn home-btn" + (" is-active" if module == "home" else "")
-    settings_btn = "header-btn" + (" is-active" if module == "settings" else "")
-    docs_btn = "header-btn" + (" is-active" if module == "docs" else "")
+    home_btn = "icon-button home-btn" + (" is-active" if module == "home" else "")
+    settings_btn = "icon-button" + (" is-active" if module == "settings" else "")
+    docs_btn = "icon-button" + (" is-active" if module == "docs" else "")
     return (
         home_cls, jobs_cls, act_cls, ins_cls, idx_cls, tbl_cls, docs_cls, set_cls,
         label, chrome, chrome, home_btn, settings_btn, docs_btn,
@@ -1168,9 +1378,12 @@ def fetch_all_data(_, __, ___, module, phase, paused):
     hidden = "toast-item toast-refresh hidden"
     nu = dash.no_update
     tid = ctx.triggered_id
+    mid = (module or "").strip().lower()
 
-    if module and module != "jobs":
+    # Page-scoped: never hit Jobs SQL / stores when another module is active.
+    if mid != "jobs":
         if tid == "store-module":
+            # Leaving Jobs — reset phase so a later visit starts clean.
             return (nu,) * 9 + ("idle", hidden)
         return (nu,) * 10 + (hidden,)
 
@@ -1368,22 +1581,27 @@ def update_refresh_interval(save_refresh_clicks, minutes, module):
 
 @app.callback(
     Output("settings-panel-connection", "className"),
+    Output("settings-panel-language", "className"),
     Output("settings-panel-metrics", "className"),
     Output("settings-panel-refresh", "className"),
     Output("settings-nav-connection", "className"),
+    Output("settings-nav-language", "className"),
     Output("settings-nav-metrics", "className"),
     Output("settings-nav-refresh", "className"),
     Output("store-settings-tab", "data"),
     Input("settings-nav-connection", "n_clicks"),
+    Input("settings-nav-language", "n_clicks"),
     Input("settings-nav-metrics", "n_clicks"),
     Input("settings-nav-refresh", "n_clicks"),
     Input("store-module", "data"),
     prevent_initial_call=False,
 )
-def switch_settings_tab(_c, _m, _r, module):
+def switch_settings_tab(_c, _lang, _m, _r, module):
     triggered = ctx.triggered_id
     tab = "connection"
-    if triggered == "settings-nav-metrics":
+    if triggered == "settings-nav-language":
+        tab = "language"
+    elif triggered == "settings-nav-metrics":
         tab = "metrics"
     elif triggered == "settings-nav-refresh":
         tab = "refresh"
@@ -1398,9 +1616,11 @@ def switch_settings_tab(_c, _m, _r, module):
 
     return (
         panel("connection"),
+        panel("language"),
         panel("metrics"),
         panel("refresh"),
         nav("connection"),
+        nav("language"),
         nav("metrics"),
         nav("refresh"),
         tab,
@@ -1532,29 +1752,35 @@ def sync_interval_on_module(module, jobs_iv, minutes):
     Input("btn-jobs-pause", "n_clicks"),
     Input("btn-activity-pause", "n_clicks"),
     State("store-paused", "data"),
+    State("store-locale", "data"),
     prevent_initial_call=True,
 )
-def toggle_pause(_, __, ___, paused):
-    module_children_live = [
+def toggle_pause(_, __, ___, paused, locale):
+    loc = normalize_locale(locale)
+    pause_lbl = t("header.pause", loc)
+    resume_lbl = t("header.resume", loc)
+    jobs_live = [Ico("pause"), " ", pause_lbl]
+    jobs_paused = [Ico("play"), " ", resume_lbl]
+    activity_live = [
         html.Span("⏸", className="ctrl-ico"),
-        html.Span("Pause", className="ctrl-txt"),
+        html.Span(pause_lbl, className="ctrl-txt"),
     ]
-    module_children_paused = [
+    activity_paused = [
         html.Span("▶", className="ctrl-ico"),
-        html.Span("Resume", className="ctrl-txt"),
+        html.Span(resume_lbl, className="ctrl-txt"),
     ]
     if paused:
         return (
             False, None,
-            [Ico("pause"), " Pause"], "header-btn refresh-btn",
-            module_children_live, "activity-ctrl-btn is-live",
-            module_children_live, "activity-ctrl-btn is-live",
+            [Ico("pause"), " ", pause_lbl], "button secondary",
+            jobs_live, "button secondary",
+            activity_live, "activity-ctrl-btn is-live",
         )
     return (
         True, None,
-        [Ico("play"), " Resume"], "header-btn refresh-btn pause-active",
-        module_children_paused, "activity-ctrl-btn is-paused",
-        module_children_paused, "activity-ctrl-btn is-paused",
+        [Ico("play"), " ", resume_lbl], "button secondary pause-active",
+        jobs_paused, "button secondary pause-active",
+        activity_paused, "activity-ctrl-btn is-paused",
     )
 
 
@@ -1567,11 +1793,14 @@ def toggle_pause(_, __, ___, paused):
     Input("jobs-refresh-interval", "data"),
 )
 def disable_intervals(paused, module, jobs_iv):
-    """When paused: stop Jobs UI refresh, Insights UI refresh, and Metric Store collector."""
+    """Only the active module may poll; Jobs/Insights/collector stay off elsewhere."""
     paused = bool(paused)
-    jobs_off = module != "jobs" or paused or str(jobs_iv or "10") == "0"
-    insights_off = module != "insights" or paused
-    collector_off = paused or (not collector_enabled())
+    mid = (module or "").strip().lower()
+    jobs_off = mid != "jobs" or paused or str(jobs_iv or "10") == "0"
+    insights_off = mid != "insights" or paused
+    # Collector: live ops modules only (not Jobs UI refresh — separate interval).
+    live_collector = mid in ("home", "activity", "insights")
+    collector_off = paused or (not collector_enabled()) or (not live_collector)
     return jobs_off, insights_off, collector_off
 
 
@@ -1582,20 +1811,21 @@ def disable_intervals(paused, module, jobs_iv):
     Output("live-indicator", "className"),
     Input("store-paused", "data"),
     Input("store-snapshot-at", "data"),
+    Input("store-locale", "data"),
 )
-def update_freeze_ui(paused, snapshot_at):
+def update_freeze_ui(paused, snapshot_at, locale):
+    loc = normalize_locale(locale)
     if not paused:
         return (
             None, "toast-item toast-pause hidden",
-            [html.Div(className="live-dot"), "Live"],
-            "live-indicator",
+            [html.Span(className="live-dot"), t("header.live", loc)],
+            "live-pill live-indicator",
         )
-    # Toast auto-hides via interval-toast-dismiss; Live indicator stays Paused
     return (
-        "⏸ Paused — click Resume",
+        t("toast.paused", loc),
         "toast-item toast-pause",
-        [html.Span("⏸", className="ico"), " Paused"],
-        "live-indicator pause-mode",
+        [html.Span(className="live-dot"), " ", t("header.paused", loc)],
+        "live-pill live-indicator paused pause-mode",
     )
 
 
@@ -1754,42 +1984,57 @@ def render_stats_and_filters(jobs):
     total = len(jobs)
     enabled = sum(1 for j in jobs if j.get("steps") != "Idle")
 
+    # Figma Make: 4 primary cards (running / success / failed / duration-style idle summary)
+    attention = counts["error"] + counts["failed"]
     stat_defs = [
-        ("running", "Running", counts["running"], f"of {enabled} enabled jobs", "play"),
-        ("error", "Error", counts["error"], "Needs attention", "warn"),
-        ("success", "Succeeded", counts["success"], "Last run", "ok"),
-        ("failed", "Failed", counts["failed"], "Auto retry", "fail"),
-        ("idle", "Idle", counts["idle"], "Disabled", "pause"),
+        ("running", counts["running"], t("jobs.stat.running", _UI_LOCALE),
+         t("jobs.stat.running_sub", _UI_LOCALE, n=enabled), "play", "up"),
+        ("success", counts["success"], t("jobs.stat.success", _UI_LOCALE),
+         t("jobs.stat.success_sub", _UI_LOCALE), "ok", ""),
+        ("failed", attention, t("jobs.stat.attention", _UI_LOCALE),
+         t("jobs.stat.attention_sub", _UI_LOCALE, n=counts["failed"]), "warn", "down"),
+        ("idle", counts["idle"], t("jobs.stat.idle", _UI_LOCALE),
+         t("jobs.stat.idle_sub", _UI_LOCALE), "pause", ""),
     ]
     stats = []
-    for i, (key, label, val, sub, icon) in enumerate(stat_defs):
-        stats.append(html.Div(
+    for i, (key, val, label, sub, icon, trend) in enumerate(stat_defs):
+        card_key = "failed" if key == "failed" else ("duration" if key == "idle" else key)
+        spark = html.Div(
+            className="spark bars",
+            children=[html.I(style={"height": f"{h}px"}) for h in (5, 8, 6, 12, 9, 15, 13, 18, 14, 20, 17, 22)],
+        ) if key == "running" else (
+            html.Div(className="incident-mini", children=[html.Span(), html.Span(), html.I(), html.I()])
+            if key == "failed" else None
+        )
+        stats.append(html.Button(
+            type="button",
             id={"type": "stat-card", "filter": key},
-            className=f"stat-card {key} animate-in",
-            style={"animationDelay": f"{0.05 + i * 0.05}s"},
+            className=f"stat-card {card_key} animate-in",
             n_clicks=0,
             children=[
-                html.Div(className="stat-header", children=[
-                    html.Span(label, className="stat-label"),
-                    html.Div(Ico(icon), className="stat-icon"),
+                html.Div(className="stat-top", children=[
+                    html.Span(Ico(icon), className="stat-icon"),
+                    html.Span(sub, className=("trend " + trend).strip()),
                 ]),
-                html.Div(str(val), className="stat-value"),
-                html.Div(sub, className="stat-sub"),
+                html.Strong(str(val)),
+                html.Span(label),
+                html.Small(sub),
+                spark,
             ],
         ))
 
     tab_defs = [
-        ("all", "All jobs", None, None),
-        ("running", "Running", counts["running"], "running-count"),
-        ("error", "Error", counts["error"], "error-count"),
-        ("success", "Succeeded", counts["success"], "success-count"),
-        ("failed", "Failed", counts["failed"], "failed-count"),
+        ("all", t("jobs.filter.all", _UI_LOCALE), None, None),
+        ("running", t("jobs.filter.running", _UI_LOCALE), counts["running"], "running-count"),
+        ("error", t("jobs.filter.error", _UI_LOCALE), counts["error"], "error-count"),
+        ("success", t("jobs.filter.success", _UI_LOCALE), counts["success"], "success-count"),
+        ("failed", t("jobs.filter.failed", _UI_LOCALE), counts["failed"], "failed-count"),
     ]
     tabs = []
     for key, label, cnt, cnt_cls in tab_defs:
         children = [label]
         if cnt is not None:
-            children = [html.Span(str(cnt), className=f"count {cnt_cls}"), f" {label}"]
+            children = [label, html.Span(str(cnt), className=f"count {cnt_cls}")]
         tabs.append(html.Button(
             id={"type": "filter-tab", "filter": key},
             className="filter-tab",
@@ -1918,7 +2163,7 @@ def switch_main_view(_, tab_ids):
     list_cls = "view-panel active" if view == "list" else "view-panel"
     gantt_cls = "view-panel active" if view == "gantt" else "view-panel"
     tab_classes = [
-        "activity-tab active" if t["view"] == view else "activity-tab" for t in tab_ids
+        "active" if tab["view"] == view else "" for tab in tab_ids
     ]
     if view == "gantt":
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -1977,6 +2222,21 @@ def highlight_filter_tab(active, ids):
     ]
 
 
+@app.callback(
+    Output({"type": "stat-card", "filter": ALL}, "className"),
+    Input("store-filter", "data"),
+    State({"type": "stat-card", "filter": ALL}, "id"),
+)
+def highlight_stat_card(active, ids):
+    out = []
+    for i in ids:
+        key = i["filter"]
+        tone = "failed" if key == "failed" else ("duration" if key == "idle" else key)
+        selected = " selected" if key == active else ""
+        out.append(f"stat-card {tone} animate-in{selected}")
+    return out
+
+
 # ── Jobs list + pagination ──────────────────────────────────────────────────────
 def _status_badge(status, had_error_today=False):
     display = status
@@ -2022,8 +2282,12 @@ def _progress_cell(job):
     Input("store-page", "data"),
     Input("store-data-loaded", "data"),
     Input("store-all-jobs", "data"),
+    State("store-module", "data"),
 )
-def render_jobs(jobs, filt, search, page, data_loaded, all_jobs_data):
+def render_jobs(jobs, filt, search, page, data_loaded, all_jobs_data, module):
+    if (module or "").strip().lower() != "jobs":
+        return dash.no_update, dash.no_update
+
     if is_configured() and not data_loaded and all_jobs_data is None:
         return (
             html.Div(className="view-center-loading", children=[
@@ -2076,17 +2340,26 @@ def render_jobs(jobs, filt, search, page, data_loaded, all_jobs_data):
 
     rows = []
     for job in page_jobs:
-        name_cell_children = [
-            html.Div(job["name"], className="job-name", title=job["name"]),
-            html.Div([
-                Ico("db", "tiny-ico"),
-                f" {job['category']}",
-            ], className="job-category"),
-        ]
+        st = job.get("status") or "idle"
+        symbol_tone = "failed" if (st in ("failed", "error") or job.get("hadErrorToday")) else (
+            "retry" if st == "retry" else ("disabled" if st in ("idle", "disabled") else "")
+        )
+        name_block = html.Div(
+            className="job-name",
+            title=job["name"],
+            children=[
+                html.Span(className=("job-symbol " + symbol_tone).strip(), children=Ico("db", "tiny-ico")),
+                html.Div(children=[
+                    html.B(job["name"]),
+                    html.Small(f"{job.get('category') or '—'} · {job.get('owner') or ''}".rstrip(" ·")),
+                ]),
+            ],
+        )
         show_err = (
-            (job.get("status") == "error" or job.get("hadErrorToday"))
+            (st == "error" or job.get("hadErrorToday"))
             and (job.get("failedStep") or job.get("errorMessage"))
         )
+        name_cell_children = [name_block]
         if show_err:
             err_parts = []
             if job.get("failedStep"):
@@ -2098,18 +2371,18 @@ def render_jobs(jobs, filt, search, page, data_loaded, all_jobs_data):
 
         rows.append(html.Div(className="job-row", role="row", children=[
             html.Div(className="job-name-cell", role="gridcell", children=name_cell_children),
-            html.Div(_status_badge(job["status"], job.get("hadErrorToday")), role="gridcell"),
+            html.Div(_status_badge(st, job.get("hadErrorToday")), role="gridcell"),
             html.Div(className="progress-cell", role="gridcell", children=_progress_cell(job)),
             html.Div([
                 Ico("clock", "tiny-ico"),
                 f" {job['duration']}",
-            ], className="time-cell", role="gridcell"),
+            ], className="time-cell", role="gridcell", **{"dir": "ltr"}),
             html.Div(job.get("nextRun", "—"), className="next-run-cell", role="gridcell"),
             html.Div(role="gridcell", children=[
                 html.Button(
                     Ico("dots"),
                     id={"type": "job-detail-btn", "job_id": job["job_id"]},
-                    className="action-btn", n_clicks=0, title="Job details",
+                    className="action-btn icon-button", n_clicks=0, title="Job details",
                 ),
             ]),
         ]))
@@ -2543,9 +2816,83 @@ app.clientside_callback(
 )
 
 
+def _stop_previous_app_processes(port: int) -> None:
+    """Close leftover `python app.py` / listeners on DASH_PORT before this process binds."""
+    import subprocess
+    import sys
+    import time
+
+    me = os.getpid()
+    to_kill: set[int] = set()
+
+    def _add(pid: int) -> None:
+        if pid and pid != me and pid not in to_kill:
+            to_kill.add(pid)
+
+    try:
+        if sys.platform == "win32":
+            net = subprocess.check_output(
+                ["netstat", "-ano", "-p", "tcp"],
+                text=True,
+                errors="replace",
+            )
+            suffix = f":{port}"
+            for line in net.splitlines():
+                parts = line.split()
+                if len(parts) < 5 or parts[-2].upper() != "LISTENING":
+                    continue
+                local = parts[1]
+                if local.endswith(suffix):
+                    try:
+                        _add(int(parts[-1]))
+                    except ValueError:
+                        pass
+        else:
+            try:
+                ss = subprocess.check_output(
+                    ["ss", "-lptn", f"sport = :{port}"],
+                    text=True,
+                    errors="replace",
+                )
+                import re
+
+                for m in re.finditer(r"pid=(\d+)", ss):
+                    _add(int(m.group(1)))
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                pass
+    except (subprocess.CalledProcessError, OSError) as ex:
+        print(f"Could not scan previous processes: {ex}")
+        return
+
+    if not to_kill:
+        print(f"No previous app.py on port {port} — starting a single new process.")
+        return
+
+    print(
+        "Stopping previous processes so one new process can start "
+        f"(port {port}, PIDs: {', '.join(str(p) for p in sorted(to_kill))})…"
+    )
+    for pid in sorted(to_kill):
+        try:
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            else:
+                os.kill(pid, 15)
+        except OSError:
+            pass
+    time.sleep(1.2)
+    print("Previous processes closed.")
+
+
 if __name__ == "__main__":
     import logging
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
+    _stop_previous_app_processes(DASH_PORT)
 
     if is_configured():
         print("Testing SQL Server connection...")
@@ -2562,5 +2909,8 @@ if __name__ == "__main__":
     from core.realtime import init_realtime, run_server
 
     init_realtime(app)
-    print("Realtime: Socket.IO activity ticks enabled (fallback Interval kept)")
+    if _REALTIME_WS:
+        print("Realtime: Socket.IO activity ticks enabled (Interval fallback kept)")
+    else:
+        print("Realtime: Socket.IO disabled — pip install flask-socketio for Activity WS ticks")
     run_server(app, host=DASH_HOST, port=DASH_PORT, debug=False)

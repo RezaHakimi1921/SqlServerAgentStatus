@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from dash import dcc, html
 
-from modules.activity.glossary import COMMAND_TIPS, STATUS_TIPS, WAIT_TIPS
+from core.i18n import DEFAULT_LOCALE, normalize_locale, t
+from modules.activity.glossary import COMMAND_TIPS, STATUS_TIPS, WAIT_DOCS
 
 DOCS_PAGES = [
     ("overview", "نمای کلی"),
@@ -15,6 +16,7 @@ DOCS_PAGES = [
     ("lookup", "Session Lookup"),
     ("blocking", "Blocking"),
     ("insights", "Today's Insights"),
+    ("tables", "Tables & Growth"),
     ("tips", "نکات عملیاتی"),
 ]
 
@@ -53,6 +55,49 @@ def _kv_table(rows: list[tuple[str, str]], *, ltr_key: bool = True):
     ])
 
 
+def _docs_accordion(entries: list[tuple[str, dict]], *, hint: str | None = None):
+    """Click-to-expand glossary (native <details> — accessible, no callback)."""
+    items = []
+    for key, meta in entries:
+        summary = (meta.get("summary") or "").strip()
+        detail = (meta.get("detail") or "").strip()
+        example = (meta.get("example") or "").strip()
+        body_kids = []
+        if detail:
+            body_kids.append(html.P(detail, className="docs-acc-detail"))
+        if example:
+            body_kids.append(
+                html.Div(
+                    className="docs-acc-example",
+                    children=[
+                        html.Span("مثال", className="docs-acc-example-label"),
+                        html.P(example, className="docs-acc-example-text"),
+                    ],
+                )
+            )
+        items.append(
+            html.Details(
+                className="docs-acc",
+                children=[
+                    html.Summary(
+                        className="docs-acc-sum",
+                        children=[
+                            html.Span(key, className="docs-acc-key num-ltr"),
+                            html.Span(summary, className="docs-acc-brief"),
+                            html.Span("▾", className="docs-acc-chevron"),
+                        ],
+                    ),
+                    html.Div(className="docs-acc-body", children=body_kids),
+                ],
+            )
+        )
+    kids = []
+    if hint:
+        kids.append(html.P(hint, className="docs-acc-hint"))
+    kids.append(html.Div(className="docs-acc-list", children=items))
+    return html.Div(className="docs-acc-wrap", children=kids)
+
+
 def _callout(kind: str, title: str, text: str):
     return html.Div(className=f"docs-callout is-{kind}", children=[
         html.Div(title, className="docs-callout-title"),
@@ -75,23 +120,43 @@ def build_docs_page(sid: str):
     """Single topic page body (pager lives outside host — stable Dash ids)."""
     status_rows = sorted(STATUS_TIPS.items(), key=lambda x: x[0])
     command_rows = sorted(COMMAND_TIPS.items(), key=lambda x: x[0])
-    wait_rows = sorted(WAIT_TIPS.items(), key=lambda x: x[0])
+    wait_entries = sorted(WAIT_DOCS.items(), key=lambda x: x[0])
 
     pages = {
         "overview": _page_shell(
             "overview",
             "نمای کلی محصول",
             _p(
-                "این مانیتور روی DMVهای SQL Server کار می‌کند (نه Extended Events). "
-                "داده‌های Live در Activity، و رویدادهای روز در Today's Insights "
-                "(Metric Store) دیده می‌شوند."
+                "SmartMonitor وضعیت SQL Server را از DMV می‌خواند "
+                "(بدون Extended Events مگر صریحاً تأیید شود)."
             ),
+            html.H4("کجا چه چیزی را ببینم؟", className="docs-h4"),
             _ul([
-                "Home → انتخاب ماژول",
-                "Activity → Running / Blocking / Session Lookup",
-                "Insights → خلاصهٔ مشکل + اقدام برای امروز",
-                "Agent Jobs → جاب‌ها و Gantt",
-                "Documentation → همین راهنما (هر موضوع یک صفحه)",
+                "Activity — الان چه کوئری‌هایی در حال اجرا / بلاک‌اند (Live)",
+                "Insights — خلاصهٔ مشکلات امروز + اقدام پیشنهادی (نه کپی Live)",
+                "Agent Jobs — جاب‌های Agent و تایم‌لاین Gantt",
+                "Indexes — سلامت ایندکس: triage، پیشنهاد، وضعیت ایندکس روی یک جدول",
+                "Tables & Growth — حجم و رشد جداول/دیتابیس‌ها (تاریخچهٔ ObjSize)",
+            ]),
+            html.H4("دو ماژول آبجکت — عمداً جدا", className="docs-h4"),
+            _p(
+                html.Strong("Indexes"),
+                " = کیفیت ایندکس (heap، unused، missing، frag اختیاری). ",
+                html.Strong("Tables & Growth"),
+                " = اندازه و رشد فضا. هر دو ممکن است یک جدول را نشان دهند، "
+                "ولی سؤال‌شان فرق دارد."
+            ),
+            _callout(
+                "info",
+                "Load fragmentation در Indexes",
+                "دکمهٔ اختیاری است: یک اسکن LIMITED روی physical stats برای درصد "
+                "fragmentation همان جدول. روی جداول خیلی بزرگ ممکن است timeout شود؛ "
+                "Recommendations و Index status بدون frag٪ هم کار می‌کنند.",
+            ),
+            html.H4("ناوبری سریع", className="docs-h4"),
+            _ul([
+                "Home → ورود به ماژول‌ها",
+                "Documentation → همین راهنما (هر موضوع یک صفحه جدا)",
             ]),
         ),
         "status": _page_shell(
@@ -132,10 +197,10 @@ def build_docs_page(sid: str):
             "wait",
             "Wait types",
             _p(
-                "وقتی Status = suspended، Wait type می‌گوید منتظر چه منبعی است. "
-                "hover روی Wait در جداول، توضیح کوتاه فارسی می‌دهد."
+                "وقتی Status = suspended، Wait type می‌گوید نشست منتظر چه منبعی است. "
+                "روی هر مورد بزنید تا توضیح کامل و یک مثال باز شود. "
+                "در جداول Activity همان خلاصه با hover دیده می‌شود."
             ),
-            _kv_table([(k, v) for k, v in wait_rows]),
             _p(
                 "پیشوندهای رایج: ",
                 html.Code("LCK_M_*"),
@@ -146,6 +211,10 @@ def build_docs_page(sid: str):
                 " رقابت حافظه · ",
                 html.Code("PREEMPTIVE_*"),
                 " فراخوانی خارج از SQL.",
+            ),
+            _docs_accordion(
+                wait_entries,
+                hint="برای باز/بسته کردن، روی نام Wait کلیک کنید.",
             ),
         ),
         "progress": _page_shell(
@@ -242,6 +311,73 @@ def build_docs_page(sid: str):
                 "Blocking کوتاه‌مدت ممکن است دیگر در Live دیده نشود — snapshot در Insight می‌ماند",
             ]),
         ),
+        "tables": _page_shell(
+            "tables",
+            "Tables & Growth",
+            _p(
+                "ماژول جدا از Indexes (Object Intelligence). "
+                "سایز فعلی جداول/دیتابیس‌ها + رشد وقتی تاریخچهٔ روزانه موجود باشد."
+            ),
+            html.H4("الان چه چیزی آماده است؟", className="docs-h4"),
+            _ul([
+                "Overview: KPI حجم کل، ردیف‌ها، رشد پنجره، تعداد DBهای دارای heap",
+                "Space by database (نوار سهم از کل)",
+                "Top growers برای پنجره‌های 1d / 7d / 30d",
+                "All Tables: جستجو، فیلتر DB، فیلتر Type؛ بروزرسانی فقط دستی (Refresh / Capture) — بدون auto-poll",
+                "Deleted = جدول فقط در History (دیگر در کاتالوگ نیست): آخرین سایز/ردیف + Last seen + Δ اگر تاریخچه داشته",
+                "منبع: کاتالوگ IdxCat_Table در صورت وجود؛ وگرنه live DMV (با سقف DB)",
+                "Capture today → EXEC insight.USP_Insight_ObjSize_Capture (+ Job صبحگاهی)",
+                "Retention پیش‌فرض ۳۰ روز (پاکسازی روی هر capture)",
+            ]),
+            html.H4("تاریخچهٔ رشد کجا ذخیره می‌شود؟", className="docs-h4"),
+            _p(
+                "جدول ",
+                html.Code("insight.ObjSize_History"),
+                " در MONITOR_DATABASE (معمولاً SmartMonitorDB). "
+                "اسکریپت: ",
+                html.Code("scripts/sql/SqlMonitor_ObjSizeHistory.sql"),
+                " · Job: ",
+                html.Code("SqlMonitor_ObjSizeHistory_Jobs.sql"),
+                " (ساعت ۰۶:۳۰).",
+            ),
+            _callout(
+                "warn",
+                "بدون Capture",
+                "اگر History خالی باشد، سایز فعلی کار می‌کند ولی ستون‌های Δ و Top growers خالی می‌مانند. "
+                "حداقل دو captured_date متمایز لازم است (Capture در یک روز همان روز را جایگزین می‌کند).",
+            ),
+            html.H4("رنگ‌بندی رشد (Δ)", className="docs-h4"),
+            _p(
+                "نسبت به میانگین Δهای مثبت همان پنجره در همهٔ دیتابیس‌ها "
+                "(نه آستانهٔ ثابت MB):"
+            ),
+            _ul([
+                "قرمز — Δ ≥ ۲× میانگین",
+                "نارنجی — Δ ≥ ۱.۲۵× میانگین",
+                "سبز — رشد مثبت زیر ۱.۲۵× میانگین",
+                "آبی (drop) — Δ منفی = افت حجم/ردیف",
+                "خاکستری — صفر یا بدون prior",
+                "Top growers: ۱۰ جدول برتر بدون اسکرول داخلی",
+            ]),
+            html.H4("چه چیزهایی عمداً جدا / بعدی است؟", className="docs-h4"),
+            _ul([
+                "Indexes / Triage / Table Explorer ایندکس → ماژول Indexes (ادغام schema نمی‌شود)",
+                "Disk & DB Health (فایل، volume free، backup age) → ماژول جدا، Planned",
+                "Autogrowth thrashing → فقط بعد از FileSpace_History یا Default Trace تأییدشده (نه Live V1)",
+                "LOB / partition map / stale stats → deepeners بعدی در صورت نیاز",
+                "پوستهٔ واحد Object Intelligence (فقط ناوبری) → Later؛ نه یکی‌کردن داده",
+                "کارت Insight «جدول X رشد کرد» → بعد از vocabulary Metric Store",
+            ]),
+            html.H4("Approach 2 (مرز محصول)", className="docs-h4"),
+            _p(
+                "ماژول‌ها مستقل‌اند؛ لایهٔ داده ",
+                html.Code("insight"),
+                " مشترک و تدریجی است. "
+                "جزئیات: docs/superpowers/specs/2026-08-08-tables-growth-design.md و "
+                "2026-08-08-disk-db-health-design.md و "
+                "2026-08-08-object-intelligence-nav-defer.md"
+            ),
+        ),
         "tips": _page_shell(
             "tips",
             "نکات عملیاتی",
@@ -257,12 +393,13 @@ def build_docs_page(sid: str):
     return pages.get(sid) or pages["overview"]
 
 
-def build_docs_layout():
+def build_docs_layout(locale: str = DEFAULT_LOCALE):
+    loc = normalize_locale(locale)
     return html.Div(className="docs-shell", children=[
         dcc.Store(id="store-docs-page", data="overview"),
         dcc.Location(id="docs-url", refresh=False),
         html.Div(className="docs-hero", children=[
-            html.H2("مستندات مانیتور", className="docs-title"),
+            html.H2(t("docs.title", loc), className="docs-title"),
             html.P(
                 "هر موضوع یک صفحه است — از فهرست کنار انتخاب کن یا با دکمه‌های پایین جابه‌جا شو.",
                 className="docs-lead",
@@ -270,7 +407,7 @@ def build_docs_layout():
         ]),
         html.Div(className="docs-layout", children=[
             html.Nav(className="docs-nav", children=[
-                html.Div("فهرست", className="docs-nav-label"),
+                html.Div(t("docs.nav", loc), className="docs-nav-label"),
                 html.Div(className="docs-nav-list", children=[
                     html.Button(
                         label,
@@ -290,7 +427,11 @@ def build_docs_layout():
                         className="docs-pager-btn",
                         n_clicks=0,
                     ),
-                    html.Span("1 / 10", id="docs-pager-pos", className="docs-pager-pos"),
+                    html.Span(
+                        f"1 / {len(DOCS_PAGES)}",
+                        id="docs-pager-pos",
+                        className="docs-pager-pos",
+                    ),
                     html.Button(
                         "←",
                         id="docs-pager-next",

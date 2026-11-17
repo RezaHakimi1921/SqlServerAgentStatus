@@ -42,14 +42,19 @@ def _attach_wait_objects_to_trees(trees: list[dict], amap: dict[str, str | None]
             _attach_wait_objects(head, amap)
 
 
-def enrich_blocking_result(result: dict, *, executor=None) -> dict:
+def enrich_blocking_result(
+    result: dict,
+    *,
+    executor=None,
+    resolve_wait_objects: bool = True,
+) -> dict:
     """Build trees, batch-resolve wait objects, merge summary. Mutates and returns result."""
     rows = result.get("rows") or []
     trees = build_blocking_trees(rows)
 
     items = _collect_wait_items_from_trees(trees)
     amap: dict[str, str | None] = {}
-    if items:
+    if items and resolve_wait_objects:
         try:
             amap = resolve_wait_objects_batch(items, executor=executor)
         except Exception:
@@ -75,11 +80,14 @@ def enrich_blocking_result(result: dict, *, executor=None) -> dict:
     return result
 
 
-def fetch_blocking(top: int = 200) -> dict:
+def fetch_blocking(top: int = 200, *, resolve_wait_objects: bool = True) -> dict:
     result = get_provider().get_blocking(top=top).to_dict()
     if result.get("status") not in ("ok", "empty"):
         return result
-    return enrich_blocking_result(result)
+    return enrich_blocking_result(
+        result,
+        resolve_wait_objects=resolve_wait_objects,
+    )
 
 
 def fetch_session_by_id(session_id) -> dict:

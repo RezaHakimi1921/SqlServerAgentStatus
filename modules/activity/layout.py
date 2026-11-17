@@ -216,7 +216,7 @@ def _interval_chips(selected="10"):
     return chips
 
 
-def build_activity_layout():
+def build_activity_layout(locale: str | None = None):
     return html.Div(
         className="activity-shell",
         children=[
@@ -305,6 +305,7 @@ def build_activity_layout():
             dcc.Store(id="store-activity-running", data=None),
             dcc.Store(id="store-activity-blocking", data=None),
             dcc.Store(id="store-activity-lookup", data=None),
+            dcc.Store(id="store-lookup-sid", data=None),
             dcc.Store(id="store-lookup-pulse-series", data=[]),
             # WS tick store lives in app.py root (store-ws-activity-tick)
         ],
@@ -371,7 +372,17 @@ def render_running_table(result: dict):
         sid = r.get("session_id")
         elapsed = int(r.get("total_elapsed_time") or 0)
         body.append(html.Tr(className=f"sev-row-{sev}", children=[
-            html.Td(str(sid), className="col-session"),
+            html.Td(
+                html.Button(
+                    str(sid),
+                    id={"type": "run-lookup-spid", "sid": sid},
+                    n_clicks=0,
+                    type="button",
+                    className="blk-badge blk-spid-btn",
+                    title=f"Open Session Lookup for {sid}",
+                ),
+                className="col-session",
+            ),
             html.Td(
                 _status_pill(r.get("status") or "—", blocked=blocked, tip_mode="title"),
                 className="col-status",

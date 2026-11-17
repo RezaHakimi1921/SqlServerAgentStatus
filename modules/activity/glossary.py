@@ -71,6 +71,14 @@ WAIT_TIPS = {
     "PREEMPTIVE_OS_PIPEOPS": "منتظر عملیات OS/pipe — گاهی Agent/external.",
 }
 
+# Docs نیاز دارد که هر Wait یک متایادیتای dict داشته باشد:
+#   { "summary": "...", "detail": "...", "example": "..." }
+# فعلاً فقط از WAIT_TIPS (متن کوتاه) استفاده می‌کنیم تا ImportError و رندر Docs درست شود.
+WAIT_DOCS = {
+    k: {"summary": v, "detail": v}
+    for k, v in WAIT_TIPS.items()
+}
+
 
 def tip_status(value: str | None) -> str:
     key = (value or "").strip().lower()

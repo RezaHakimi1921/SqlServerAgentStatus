@@ -17,18 +17,15 @@ REFRESH_OPTIONS = [
 
 
 def _native_select(select_id, options, value, className="form-input native-select"):
+    """Dash html.Select does not support `value` in callback State — use Dropdown."""
     str_val = str(value) if value is not None else ""
-    return html.Select(
+    return dcc.Dropdown(
         id=select_id,
         className=className,
-        children=[
-            html.Option(
-                opt["label"],
-                value=str(opt["value"]),
-                selected=(str(opt["value"]) == str_val),
-            )
-            for opt in options
-        ],
+        options=[{"label": o["label"], "value": str(o["value"])} for o in options],
+        value=str_val or None,
+        clearable=False,
+        searchable=False,
     )
 
 
@@ -86,35 +83,46 @@ def render_metric_schedule_editor():
     return parts
 
 
-def build_settings_layout():
+def build_settings_layout(locale: str = "en"):
+    from core.i18n import normalize_locale, t
+
+    locale = normalize_locale(locale)
     cfg = load_config()
     configured = is_configured()
+    current_loc = normalize_locale(cfg.get("locale") or locale)
     return html.Div(
         className="settings-page",
         children=[
             html.Div(className="settings-page-hero", children=[
-                html.H2("Settings"),
-                html.P("Connection, Insight metric intervals, and Jobs auto-refresh — each in its own section."),
+                html.H2(t("settings.title", locale)),
+                html.P(t("settings.subtitle", locale)),
             ]),
             html.Div(className="settings-page-card", children=[
                 html.Div(className="settings-layout", children=[
                     html.Div(className="settings-nav", role="tablist", children=[
                         html.Button(
-                            "Connection",
+                            t("settings.nav.connection", locale),
                             id="settings-nav-connection",
                             className="settings-nav-btn is-active",
                             n_clicks=0,
                             type="button",
                         ),
                         html.Button(
-                            "Insight metrics",
+                            t("settings.nav.language", locale),
+                            id="settings-nav-language",
+                            className="settings-nav-btn",
+                            n_clicks=0,
+                            type="button",
+                        ),
+                        html.Button(
+                            t("settings.nav.metrics", locale),
                             id="settings-nav-metrics",
                             className="settings-nav-btn",
                             n_clicks=0,
                             type="button",
                         ),
                         html.Button(
-                            "Auto refresh",
+                            t("settings.nav.refresh", locale),
                             id="settings-nav-refresh",
                             className="settings-nav-btn",
                             n_clicks=0,
@@ -126,13 +134,13 @@ def build_settings_layout():
                             id="settings-panel-connection",
                             className="settings-panel",
                             children=[
-                                html.H3("SQL Server connection", className="settings-section-title"),
+                                html.H3(t("settings.conn.title", locale), className="settings-section-title"),
                                 html.P(
-                                    "Password is stored in Windows Credential Manager.",
+                                    t("settings.conn.hint", locale),
                                     className="settings-hint",
                                 ),
                                 html.Div(className="form-group", children=[
-                                    html.Label("Server / IP"),
+                                    html.Label(t("settings.conn.server", locale)),
                                     dcc.Input(
                                         id="setup-server", className="form-input", type="text",
                                         placeholder="192.168.1.10 یا SERVER\\INSTANCE",
@@ -140,21 +148,21 @@ def build_settings_layout():
                                     ),
                                 ]),
                                 html.Div(className="form-group", children=[
-                                    html.Label("Database"),
+                                    html.Label(t("settings.conn.database", locale)),
                                     dcc.Input(
                                         id="setup-database", className="form-input", type="text",
                                         placeholder="msdb", value=cfg["database"],
                                     ),
                                 ]),
                                 html.Div(className="form-group", children=[
-                                    html.Label("Username"),
+                                    html.Label(t("settings.conn.user", locale)),
                                     dcc.Input(
                                         id="setup-user", className="form-input", type="text",
                                         placeholder="sql_login", value=cfg["user"],
                                     ),
                                 ]),
                                 html.Div(className="form-group", children=[
-                                    html.Label("Password"),
+                                    html.Label(t("settings.conn.password", locale)),
                                     dcc.Input(
                                         id="setup-password", className="form-input", type="password",
                                         placeholder=(
@@ -174,7 +182,7 @@ def build_settings_layout():
                                     ),
                                 ]),
                                 html.Div(className="form-group", children=[
-                                    html.Label("ODBC Driver"),
+                                    html.Label(t("settings.conn.driver", locale)),
                                     _native_select(
                                         "setup-driver",
                                         list_sql_driver_options(),
@@ -182,7 +190,7 @@ def build_settings_layout():
                                     ),
                                 ]),
                                 html.Div(className="permissions-box", children=[
-                                    html.H3("Required permissions"),
+                                    html.H3(t("settings.conn.perms", locale)),
                                     html.Ul([
                                         html.Li("SELECT on msdb.dbo.sysjobs"),
                                         html.Li("SELECT on msdb.dbo.sysjobsteps"),
@@ -194,37 +202,67 @@ def build_settings_layout():
                                 html.Div(id="setup-message", className="setup-message"),
                                 html.Div(className="settings-panel-actions", children=[
                                     html.Button(
-                                        "Test connection", id="btn-test-connection",
+                                        t("settings.conn.btn_test", locale), id="btn-test-connection",
                                         className="btn-primary", n_clicks=0,
                                     ),
                                     html.Button(
-                                        "Save connection", id="btn-save-connection",
+                                        t("settings.conn.btn_save", locale), id="btn-save-connection",
                                         className="btn-success", n_clicks=0,
                                     ),
                                 ]),
                             ],
                         ),
                         html.Div(
+                            id="settings-panel-language",
+                            className="settings-panel hidden",
+                            children=[
+                                html.H3(t("settings.lang.title", locale), className="settings-section-title"),
+                                html.P(t("settings.lang.help", locale), className="settings-hint"),
+                                html.Div(className="lang-choice-row", children=[
+                                    html.Button(
+                                        t("settings.lang.en", locale),
+                                        id={"type": "locale-chip", "value": "en"},
+                                        n_clicks=0,
+                                        type="button",
+                                        className=(
+                                            "activity-chip lang-chip"
+                                            + (" active" if current_loc == "en" else "")
+                                        ),
+                                    ),
+                                    html.Button(
+                                        t("settings.lang.fa", locale),
+                                        id={"type": "locale-chip", "value": "fa"},
+                                        n_clicks=0,
+                                        type="button",
+                                        className=(
+                                            "activity-chip lang-chip"
+                                            + (" active" if current_loc == "fa" else "")
+                                        ),
+                                    ),
+                                ]),
+                                html.Div(id="locale-message", className="setup-message"),
+                            ],
+                        ),
+                        html.Div(
                             id="settings-panel-metrics",
                             className="settings-panel hidden",
                             children=[
-                                html.H3("Insight metric intervals", className="settings-section-title"),
+                                html.H3(t("settings.metrics.title", locale), className="settings-section-title"),
                                 html.P(
-                                    "How often each metric is written to SmartMonitorDB. "
-                                    "Minimum 10 seconds. Saved in insight.metric_schedule.",
+                                    t("settings.metrics.hint", locale),
                                     className="settings-hint",
                                 ),
                                 html.Div(id="settings-metric-schedule", className="metric-schedule-editor"),
                                 html.Div(id="metric-schedule-msg", className="setup-message"),
                                 html.Div(className="settings-panel-actions", children=[
                                     html.Button(
-                                        "Reset to defaults",
+                                        t("settings.metrics.btn_reset", locale),
                                         id="btn-reset-metric-schedule",
                                         className="btn-ghost",
                                         n_clicks=0,
                                     ),
                                     html.Button(
-                                        "Save metric intervals",
+                                        t("settings.metrics.btn_save", locale),
                                         id="btn-save-metric-schedule",
                                         className="btn-primary",
                                         n_clicks=0,
@@ -236,13 +274,13 @@ def build_settings_layout():
                             id="settings-panel-refresh",
                             className="settings-panel hidden",
                             children=[
-                                html.H3("Auto refresh", className="settings-section-title"),
+                                html.H3(t("settings.refresh.title", locale), className="settings-section-title"),
                                 html.P(
-                                    "How often Jobs reloads data from SQL Server.",
+                                    t("settings.refresh.hint", locale),
                                     className="settings-hint",
                                 ),
                                 html.Div(className="form-group", children=[
-                                    html.Label("Jobs refresh interval"),
+                                    html.Label(t("settings.refresh.title", locale)),
                                     html.Div(
                                         id="settings-refresh-chips",
                                         className="activity-chip-row settings-refresh-chips",
@@ -269,7 +307,7 @@ def build_settings_layout():
                                 html.Div(id="setup-refresh-message", className="setup-message"),
                                 html.Div(className="settings-panel-actions", children=[
                                     html.Button(
-                                        "Save refresh", id="btn-save-refresh",
+                                        t("settings.refresh.btn_save", locale), id="btn-save-refresh",
                                         className="btn-primary", n_clicks=0,
                                     ),
                                 ]),

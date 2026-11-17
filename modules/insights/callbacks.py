@@ -58,14 +58,7 @@ def register_insights_callbacks(app):
         prevent_initial_call=True,
     )
 
-    @app.callback(
-        Output("interval-insights", "disabled"),
-        Input("store-paused", "data"),
-        Input("store-module", "data"),
-        prevent_initial_call=False,
-    )
-    def tune_insights_interval(paused, module):
-        return module != "insights" or bool(paused)
+    # interval-insights.disabled is owned by app.disable_intervals (module + pause).
 
     @app.callback(
         Output("store-insights", "data"),
@@ -77,9 +70,10 @@ def register_insights_callbacks(app):
         Input("interval-insights", "n_intervals"),
         Input("store-module", "data"),
         State("store-paused", "data"),
+        State("store-locale", "data"),
         prevent_initial_call=False,
     )
-    def load_insights(_refresh, _n, module, paused):
+    def load_insights(_refresh, _n, module, paused, locale):
         if module != "insights":
             return no_update, no_update, no_update, no_update, "activity-loading hidden"
 
@@ -102,7 +96,7 @@ def register_insights_callbacks(app):
             ])
             return (
                 None,
-                render_insights_health([]),
+                render_insights_health([], locale),
                 err_body,
                 f"Error · {datetime.now().strftime('%H:%M:%S')}",
                 "activity-loading hidden",
@@ -116,8 +110,8 @@ def register_insights_callbacks(app):
         )
         return (
             payload,
-            render_insights_health(rows),
-            render_insights_list(rows),
+            render_insights_health(rows, locale),
+            render_insights_list(rows, locale),
             meta,
             loading_cls,
         )
@@ -127,9 +121,10 @@ def register_insights_callbacks(app):
         Output("insights-body", "children", allow_duplicate=True),
         Output("insights-health-strip", "children", allow_duplicate=True),
         Input({"type": "insight-dismiss", "id": ALL}, "n_clicks"),
+        State("store-locale", "data"),
         prevent_initial_call=True,
     )
-    def dismiss_insight(clicks):
+    def dismiss_insight(clicks, locale):
         triggered = ctx.triggered_id
         if not isinstance(triggered, dict) or not any(clicks or []):
             return no_update, no_update, no_update
@@ -142,8 +137,8 @@ def register_insights_callbacks(app):
             return no_update, no_update, no_update
         return (
             _serialize_insight_rows(rows),
-            render_insights_list(rows),
-            render_insights_health(rows),
+            render_insights_list(rows, locale),
+            render_insights_health(rows, locale),
         )
 
     @app.callback(

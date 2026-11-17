@@ -1,4 +1,4 @@
-"""Background table intelligence loads so Dash UI stays responsive."""
+﻿"""Background table intelligence loads so Dash UI stays responsive."""
 from __future__ import annotations
 
 import threading
@@ -7,7 +7,7 @@ import uuid
 from typing import Any
 
 from core.logging_setup import get_logger
-from core.providers.sqlserver_provider import get_provider
+from core.providers.factory import get_provider
 from modules.indexes.service import build_table_intelligence
 
 log = get_logger("sqlmonitor.indexes.table_jobs")

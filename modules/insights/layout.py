@@ -7,6 +7,7 @@ import re
 from dash import dcc, html
 
 from core.formatters import fmt_duration_hms, fmt_int
+from core.i18n import DEFAULT_LOCALE, normalize_locale, t
 from core.insight.rules import blocking_action_fa, blocking_cause_fa, blocking_glance_fa
 
 
@@ -42,21 +43,22 @@ def _clean_detail(text: str) -> str:
     return text.strip()
 
 
-def build_insights_layout():
+def build_insights_layout(locale: str = DEFAULT_LOCALE):
+    loc = normalize_locale(locale)
     return html.Div(
         className="insights-shell",
         children=[
             html.Div(className="activity-toolbar insights-toolbar", children=[
                 html.Div(className="activity-tabs", children=[
-                    html.Span("Today's Insights", className="insights-title"),
+                    html.Span(t("module.insights.title", loc), className="insights-title"),
                     html.Span(
-                        "خلاصه مشکل + اقدام — جزئیات اختیاری",
+                        t("module.insights.subtitle", loc),
                         className="insights-sub",
                     ),
                 ]),
                 html.Div(className="activity-controls", children=[
                     html.Button(
-                        [html.Span("↻", className="ctrl-ico"), html.Span("Refresh", className="ctrl-txt")],
+                        [html.Span("↻", className="ctrl-ico"), html.Span(t("header.refresh", loc), className="ctrl-txt")],
                         id="btn-insights-refresh",
                         className="activity-ctrl-btn is-refresh",
                         n_clicks=0,
@@ -72,7 +74,7 @@ def build_insights_layout():
                 children=[
                     html.Div(className="activity-loading-card", children=[
                         html.Div(className="activity-loading-spinner"),
-                        html.Div("Loading insights…", className="activity-loading-text"),
+                        html.Div(t("insights.loading", loc), className="activity-loading-text"),
                     ]),
                 ],
             ),
@@ -83,15 +85,16 @@ def build_insights_layout():
     )
 
 
-def render_insights_health(rows: list) -> list:
+def render_insights_health(rows: list, locale: str = DEFAULT_LOCALE) -> list:
+    loc = normalize_locale(locale)
     crit = sum(1 for r in rows if (r.get("severity") or "").lower() == "critical")
     warn = sum(1 for r in rows if (r.get("severity") or "").lower() == "warning")
     info = sum(1 for r in rows if (r.get("severity") or "").lower() == "info")
     cards = [
-        ("Critical", crit, "tone-crit" if crit else "tone-ok"),
-        ("Warning", warn, "tone-hot" if warn else "tone-ok"),
-        ("Info", info, "tone-ok"),
-        ("Total today", len(rows), "tone-ok"),
+        (t("insights.kpi.critical", loc), crit, "tone-crit" if crit else "tone-ok"),
+        (t("insights.kpi.warning", loc), warn, "tone-hot" if warn else "tone-ok"),
+        (t("insights.kpi.info", loc), info, "tone-ok"),
+        (t("insights.kpi.total", loc), len(rows), "tone-ok"),
     ]
     return [
         html.Div(className=f"health-card {tone}", children=[
@@ -104,11 +107,25 @@ def render_insights_health(rows: list) -> list:
 
 def _sql_box(label: str, sql: str | None, empty_hint: str) -> html.Div:
     text = (sql or "").strip()
+    if not text:
+        return html.Div(className="insight-sql-box", children=[
+            html.Div(label, className="insight-sql-lbl"),
+            html.Pre(empty_hint, className="insight-blk-sql is-empty"),
+        ])
+    from modules.activity.layout import _sql_highlight_nodes, extract_sql_target
+    target = extract_sql_target(text)
     return html.Div(className="insight-sql-box", children=[
         html.Div(label, className="insight-sql-lbl"),
+        (
+            html.Div(
+                f"{target.get('verb')} · {target.get('table')}",
+                className="insight-sql-table num-ltr",
+            )
+            if target and target.get("table") else None
+        ),
         html.Pre(
-            text if text else empty_hint,
-            className="insight-blk-sql" + ("" if text else " is-empty"),
+            _sql_highlight_nodes(text, emphasize_table=(target or {}).get("table")),
+            className="insight-blk-sql has-tokens",
         ),
     ])
 
@@ -208,11 +225,12 @@ def _job_glance(detail: str, title: str) -> tuple[str, str]:
     return problem, action
 
 
-def render_insights_list(rows: list):
+def render_insights_list(rows: list, locale: str = DEFAULT_LOCALE):
+    loc = normalize_locale(locale)
     if not rows:
         return html.Div(className="state-box state-empty", children=[
             html.Div("✓", className="state-icon"),
-            html.H3("هنوز Insightای برای امروز نیست"),
+            html.H3(t("insights.empty.title", loc)),
             html.P(
                 "وقتی blocking یا job failure در Metric Store ثبت شود، اینجا ظاهر می‌شود.",
             ),
@@ -272,23 +290,23 @@ def render_insights_list(rows: list):
             html.Div(title, className="insight-title"),
             html.Div(className="insight-glance", children=[
                 html.Div(className="insight-glance-row is-problem", children=[
-                    html.Span("مشکل", className="insight-glance-lbl"),
+                    html.Span(t("insights.glance.problem", loc), className="insight-glance-lbl"),
                     html.Span(problem, className="insight-glance-text"),
                 ]),
                 html.Div(className="insight-glance-row is-action", children=[
-                    html.Span("اقدام", className="insight-glance-lbl"),
+                    html.Span(t("insights.glance.action", loc), className="insight-glance-lbl"),
                     html.Span(action, className="insight-glance-text"),
                 ]),
             ]),
             html.Details(className="insight-details", open=False, children=[
-                html.Summary("جزئیات بیشتر"),
+                html.Summary(t("insights.details", loc)),
                 html.Div(className="insight-details-body", children=details_children),
             ]) if details_children else None,
             html.Div(className="insight-actions", children=[
                 c for c in [
                     link_btn,
                     html.Button(
-                        "این مهم نبود",
+                        t("insights.dismiss", loc),
                         id={"type": "insight-dismiss", "id": iid},
                         className="insight-dismiss-btn",
                         n_clicks=0,

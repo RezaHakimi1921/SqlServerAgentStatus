@@ -1,10 +1,13 @@
 /**
- * Activity Monitor — Socket.IO client.
- * Joins the "activity" room and bumps store-ws-activity-tick so Dash refreshes live.
+ * Activity Monitor — Socket.IO client (lazy, fail-soft).
+ * Connects only while Activity tab is visible; stops retry spam on failure.
  */
 (function () {
   var socket = null;
   var joined = false;
+  var disabled = false;
+  var failCount = 0;
+  var MAX_FAIL = 2;
 
   function setTick(t) {
     try {
@@ -35,48 +38,89 @@
     }
   }
 
-  function connect() {
-    if (typeof io === "undefined") {
-      console.warn("[activity_ws] socket.io client missing");
-      return;
+  function teardown() {
+    if (socket) {
+      try {
+        socket.removeAllListeners();
+        socket.close();
+      } catch (e) {
+        /* ignore */
+      }
     }
+    socket = null;
+    joined = false;
+  }
+
+  function disableWs(reason) {
+    if (disabled) return;
+    disabled = true;
+    teardown();
+    if (failCount >= MAX_FAIL) {
+      console.info("[activity_ws] realtime disabled:", reason || "server unavailable");
+    }
+  }
+
+  function connect() {
+    if (disabled || window.__SM_REALTIME_WS__ === false) return;
+    if (!isActivityVisible()) return;
+    if (typeof io === "undefined") return;
     if (socket) return;
+
     socket = io({
-      transports: ["websocket", "polling"],
+      transports: ["polling", "websocket"],
       reconnection: true,
-      reconnectionDelay: 800,
-      reconnectionDelayMax: 5000,
+      reconnectionAttempts: MAX_FAIL,
+      reconnectionDelay: 1200,
+      reconnectionDelayMax: 4000,
+      timeout: 8000,
     });
+
     socket.on("connect", function () {
+      failCount = 0;
       joined = false;
       syncRoom();
     });
+
+    socket.on("connect_error", function () {
+      failCount += 1;
+      if (failCount >= MAX_FAIL) {
+        disableWs("connect_error");
+      }
+    });
+
     socket.on("activity_tick", function (payload) {
       if (!isActivityVisible()) return;
-      var pausedBtn = document.getElementById("btn-pause");
-      // Pause button label/state is driven by Dash; store-paused checked server-side too
       setTick((payload && payload.t) || Date.now() / 1000);
     });
+
     socket.on("disconnect", function () {
       joined = false;
     });
+  }
 
-    // Watch Activity panel class changes
+  function watchActivityPanel() {
     var panel = document.getElementById("module-activity");
     if (panel && window.MutationObserver) {
-      new MutationObserver(syncRoom).observe(panel, {
-        attributes: true,
-        attributeFilter: ["class"],
-      });
+      new MutationObserver(function () {
+        if (isActivityVisible()) connect();
+        else {
+          syncRoom();
+          if (socket && !socket.connected) teardown();
+        }
+      }).observe(panel, { attributes: true, attributeFilter: ["class"] });
     }
-    setInterval(syncRoom, 2000);
+    setInterval(function () {
+      if (disabled) return;
+      if (isActivityVisible()) connect();
+      else syncRoom();
+    }, 2500);
   }
 
   if (document.readyState === "complete") {
-    setTimeout(connect, 200);
+    setTimeout(watchActivityPanel, 300);
   } else {
     window.addEventListener("load", function () {
-      setTimeout(connect, 200);
+      setTimeout(watchActivityPanel, 300);
     });
   }
 })();

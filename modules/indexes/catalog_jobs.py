@@ -1,4 +1,4 @@
-"""Background catalog refresh so Dash UI stays responsive."""
+﻿"""Background catalog refresh so Dash UI stays responsive."""
 from __future__ import annotations
 
 import threading
@@ -7,7 +7,7 @@ import uuid
 from typing import Any
 
 from core.logging_setup import get_logger
-from core.providers.sqlserver_provider import get_provider
+from core.providers.factory import get_provider
 
 log = get_logger("sqlmonitor.indexes.catalog_jobs")
 

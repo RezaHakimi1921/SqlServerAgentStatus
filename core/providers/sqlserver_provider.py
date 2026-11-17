@@ -1,6 +1,8 @@
 """SQL Server DMV provider. No stored procedures."""
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
+
 import time
 from typing import Any, Dict, List
 
@@ -17,6 +19,7 @@ from core.permissions import (
 from core import severity as sev
 from config import load_config
 from modules.indexes.constants import (
+    INDEX_ADVISOR_FRESHNESS_MINUTES,
     INDEX_CAP_MISSING,
     INDEX_CATALOG_REFRESH_PROC,
     INDEX_CATALOG_REFRESH_TIMEOUT_SEC,
@@ -42,10 +45,23 @@ from modules.tables.constants import (
     TABLES_DELTA_WINDOWS_DAYS,
     TABLES_LIVE_DB_CAP,
     TABLES_LIVE_DB_TIMEOUT_SEC,
+    TABLES_LIVE_VERIFY_CACHE_SEC,
+    TABLES_LIVE_VERIFY_TIMEOUT_SEC,
+    TABLES_LIVE_VERIFY_WORKERS,
     TABLES_QUERY_TIMEOUT_SEC,
+    TABLES_SNAPSHOT_CACHE_SEC,
 )
 
 log = get_logger("sqlmonitor.provider")
+
+_TABLE_GROWTH_CACHE: Dict[str, Any] = {"ts": 0.0, "data": None}
+_LIVE_KEYS_CACHE: Dict[str, Any] = {
+    "ts": 0.0,
+    "fp": "",
+    "keys": None,
+    "scanned": None,
+    "errors": None,
+}
 
 # Background / idle system waits — never useful in Running Now (sp_WhoIsActive-style).
 _BENIGN_WAIT_SQL = """
@@ -140,10 +156,10 @@ SELECT
     -- Wall-clock elapsed (matches what you see in SSMS / WhoIsActive better than total_elapsed_time alone)
     CASE
         WHEN r.start_time IS NOT NULL
-            THEN DATEDIFF(MILLISECOND, r.start_time, SYSDATETIME())
+            THEN DATEDIFF_BIG(MILLISECOND, r.start_time, SYSDATETIME())
         WHEN s.last_request_start_time IS NOT NULL
              AND (s.last_request_end_time IS NULL OR s.last_request_end_time < s.last_request_start_time)
-            THEN DATEDIFF(MILLISECOND, s.last_request_start_time, SYSDATETIME())
+            THEN DATEDIFF_BIG(MILLISECOND, s.last_request_start_time, SYSDATETIME())
         ELSE 0
     END AS elapsed_wall_ms,
     ISNULL(r.reads, s.reads) AS reads,
@@ -358,18 +374,44 @@ WHERE t.is_ms_shipped = 0
 """
 
 
+def _as_bit(v: Any) -> bool:
+    """SQL Server BIT via pyodbc may arrive as bytes; bool(b'\\x00') is True — wrong."""
+    if v is None or v is False:
+        return False
+    if v is True:
+        return True
+    if isinstance(v, (bytes, bytearray, memoryview)):
+        b = bytes(v)
+        return len(b) > 0 and b[0] != 0
+    if isinstance(v, (int, float)):
+        return int(v) != 0
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "y")
+    return bool(v)
+
+def _json_safe_sql_value(val: Any) -> Any:
+    """Serialize pyodbc values for Dash stores (date ≠ datetime isoformat kwargs)."""
+    if isinstance(val, datetime):
+        return val.isoformat(sep=" ", timespec="seconds")
+    if isinstance(val, date):
+        return val.isoformat()
+    if hasattr(val, "isoformat"):
+        try:
+            return val.isoformat(sep=" ", timespec="seconds")
+        except TypeError:
+            return val.isoformat()
+    return val
+
 def _rows_to_dicts(cursor) -> List[Dict[str, Any]]:
     cols = [c[0] for c in cursor.description]
     out = []
     for row in cursor.fetchall():
         item = {}
         for col, val in zip(cols, row):
-            if hasattr(val, "isoformat"):
-                item[col] = val.isoformat(sep=" ", timespec="seconds")
-            else:
-                item[col] = val
+            item[col] = _json_safe_sql_value(val)
         out.append(item)
     return out
+
 
 
 class SqlServerProvider:
@@ -1103,8 +1145,148 @@ OPTION (MAXRECURSION 200);
             out[str(days)] = _rows_to_dicts(cur)
         return out
 
-    def get_table_growth_snapshot(self) -> Dict[str, Any]:
+    def _live_table_keys(
+        self, databases: List[str], *, force: bool = False
+    ) -> tuple[set[tuple[str, str, str]], set[str], Dict[str, str]]:
+        """Return (keys, successfully_scanned_dbs, errors) from sys.tables.
+
+        Parallel + short cache — full sequential scans made Tables & Growth unusable.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        dbs = sorted({str(d or "").strip() for d in databases if str(d or "").strip()})
+        fp = "|".join(dbs)
+        now = time.time()
+        if (
+            not force
+            and _LIVE_KEYS_CACHE.get("fp") == fp
+            and _LIVE_KEYS_CACHE.get("keys") is not None
+            and (now - float(_LIVE_KEYS_CACHE.get("ts") or 0))
+            < float(TABLES_LIVE_VERIFY_CACHE_SEC)
+        ):
+            return (
+                set(_LIVE_KEYS_CACHE["keys"]),
+                set(_LIVE_KEYS_CACHE["scanned"] or set()),
+                dict(_LIVE_KEYS_CACHE.get("errors") or {}),
+            )
+
+        sql = """
+            SELECT DB_NAME(), s.name, t.name
+            FROM sys.tables AS t
+            INNER JOIN sys.schemas AS s ON s.schema_id = t.schema_id
+            WHERE t.is_ms_shipped = 0 AND t.type = 'U'
+            """
+
+        def _one(db: str) -> tuple[str, set[tuple[str, str, str]] | None, str | None]:
+            try:
+                conn = _connect_to_database(db)
+                try:
+                    try:
+                        conn.timeout = int(TABLES_LIVE_VERIFY_TIMEOUT_SEC)
+                    except Exception:
+                        pass
+                    cur = conn.cursor()
+                    cur.execute(sql)
+                    found: set[tuple[str, str, str]] = set()
+                    for row in cur.fetchall() or []:
+                        found.add((str(row[0]), str(row[1] or "dbo"), str(row[2] or "")))
+                    return db, found, None
+                finally:
+                    conn.close()
+            except Exception as ex:
+                return db, None, str(ex)
+
+        keys: set[tuple[str, str, str]] = set()
+        scanned: set[str] = set()
+        errors: Dict[str, str] = {}
+        workers = max(1, min(int(TABLES_LIVE_VERIFY_WORKERS), len(dbs) or 1))
+        if dbs:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futs = [pool.submit(_one, db) for db in dbs]
+                for fut in as_completed(futs):
+                    db, found, err = fut.result()
+                    if err is not None:
+                        errors[db] = err
+                        log.debug("live table keys failed db=%s: %s", db, err)
+                    else:
+                        scanned.add(db)
+                        keys |= found or set()
+
+        _LIVE_KEYS_CACHE["ts"] = now
+        _LIVE_KEYS_CACHE["fp"] = fp
+        _LIVE_KEYS_CACHE["keys"] = set(keys)
+        _LIVE_KEYS_CACHE["scanned"] = set(scanned)
+        _LIVE_KEYS_CACHE["errors"] = dict(errors)
+        return keys, scanned, errors
+
+    def _history_last_seen_rows(self, cur) -> List[dict]:
+        """One row per table at its newest captured_date (cheap deleted probe)."""
+        cur.execute(
+            """
+            ;WITH ls AS (
+                SELECT
+                    database_name, schema_name, table_name,
+                    MAX(captured_date) AS last_seen
+                FROM insight.ObjSize_History
+                GROUP BY database_name, schema_name, table_name
+            )
+            SELECT
+                h.database_name, h.schema_name, h.table_name,
+                h.captured_date, h.row_count, h.size_mb, h.is_heap
+            FROM insight.ObjSize_History AS h
+            INNER JOIN ls
+                ON h.database_name = ls.database_name
+               AND h.schema_name = ls.schema_name
+               AND h.table_name = ls.table_name
+               AND h.captured_date = ls.last_seen
+            """
+        )
+        return _rows_to_dicts(cur)
+
+    def _history_rows_for_keys(
+        self, cur, keys: set[tuple[str, str, str]]
+    ) -> List[dict]:
+        """Full history series only for candidate DELETED keys (for last-seen + deltas)."""
+        if not keys:
+            return []
+        out: List[dict] = []
+        batch = list(keys)
+        chunk_size = 40
+        for i in range(0, len(batch), chunk_size):
+            chunk = batch[i : i + chunk_size]
+            clauses = []
+            params: List[Any] = []
+            for db, sch, tbl in chunk:
+                clauses.append(
+                    "(database_name = ? AND schema_name = ? AND table_name = ?)"
+                )
+                params.extend([db, sch, tbl])
+            cur.execute(
+                f"""
+                SELECT
+                    database_name, schema_name, table_name,
+                    captured_date, row_count, size_mb, is_heap
+                FROM insight.ObjSize_History
+                WHERE {' OR '.join(clauses)}
+                ORDER BY database_name, schema_name, table_name, captured_date
+                """,
+                *params,
+            )
+            out.extend(_rows_to_dicts(cur))
+        return out
+
+    def get_table_growth_snapshot(self, *, force: bool = False) -> Dict[str, Any]:
         """Current table sizes (catalog-first) + optional ObjSize_History deltas."""
+        now = time.time()
+        cached = _TABLE_GROWTH_CACHE.get("data")
+        if (
+            not force
+            and cached is not None
+            and (now - float(_TABLE_GROWTH_CACHE.get("ts") or 0))
+            < float(TABLES_SNAPSHOT_CACHE_SEC)
+        ):
+            return cached
+
         errors: Dict[str, str] = {}
         catalog = self._current_tables_from_catalog()
         if catalog is not None:
@@ -1113,11 +1295,54 @@ OPTION (MAXRECURSION 200);
             base = self._current_tables_live()
             errors.update(base.get("errors") or {})
 
+        # Drop non-JSON fields early (refreshed_at datetime breaks Dash stores).
+        tables: List[dict] = []
+        for r in (base.get("tables") or []):
+            tables.append({
+                "database_name": str(r.get("database_name") or ""),
+                "schema_name": str(r.get("schema_name") or "dbo"),
+                "table_name": str(r.get("table_name") or ""),
+                "row_count": int(r.get("row_count") or 0),
+                "size_mb": round(float(r.get("size_mb") or 0), 3),
+                "is_heap": _as_bit(r.get("is_heap")),
+                "source": str(r.get("source") or base.get("source") or "live"),
+            })
+
+        # Catalog can lag after DROP — verify with live sys.tables (parallel + cached).
+        present_keys: set[tuple[str, str, str]] = {
+            (t["database_name"], t["schema_name"], t["table_name"]) for t in tables
+        }
+        if tables and (base.get("source") or "") == "catalog":
+            db_names = sorted({t["database_name"] for t in tables if t.get("database_name")})
+            live_keys, scanned_dbs, live_err = self._live_table_keys(
+                db_names, force=force
+            )
+            if live_err:
+                errors["live_verify"] = (
+                    f"{len(live_err)} database(s) could not be checked for DROP"
+                )
+            if scanned_dbs:
+                kept: List[dict] = []
+                present_keys = set()
+                for t in tables:
+                    db = t["database_name"]
+                    key = (db, t["schema_name"], t["table_name"])
+                    if db not in scanned_dbs:
+                        kept.append(t)
+                        present_keys.add(key)
+                    elif key in live_keys:
+                        kept.append(t)
+                        present_keys.add(key)
+                tables = kept
+                present_keys |= live_keys
+
         history_available = False
         history_by_window: Dict[str, List[dict]] = {
             str(d): [] for d in TABLES_DELTA_WINDOWS_DAYS
         }
+        deleted_history_rows: List[dict] = []
         latest_capture_date = None
+        metrics_source = base.get("source") or "live"
         try:
             conn, _mon = self._open_monitor_connection(timeout=int(TABLES_QUERY_TIMEOUT_SEC))
             if conn is not None:
@@ -1132,25 +1357,73 @@ OPTION (MAXRECURSION 200);
                         latest_capture_date = cnt_row[1] if cnt_row else None
                         if hasattr(latest_capture_date, "isoformat"):
                             latest_capture_date = latest_capture_date.isoformat()
+                        else:
+                            latest_capture_date = (
+                                str(latest_capture_date) if latest_capture_date else None
+                            )
                         history_available = cnt > 0
                         if history_available:
                             history_by_window = self._history_by_window(cur)
+                            # Newest capture per table — overlays stale IdxCat metrics and
+                            # drives DELETED detection.
+                            last_seen_rows = self._history_last_seen_rows(cur)
+                            latest_map = {
+                                (
+                                    str(r.get("database_name") or ""),
+                                    str(r.get("schema_name") or "dbo"),
+                                    str(r.get("table_name") or ""),
+                                ): r
+                                for r in last_seen_rows
+                            }
+                            overlaid = 0
+                            for t in tables:
+                                key = (
+                                    t["database_name"],
+                                    t["schema_name"],
+                                    t["table_name"],
+                                )
+                                hist = latest_map.get(key)
+                                if hist is None:
+                                    continue
+                                try:
+                                    t["row_count"] = int(hist.get("row_count") or 0)
+                                except (TypeError, ValueError):
+                                    t["row_count"] = 0
+                                try:
+                                    t["size_mb"] = round(float(hist.get("size_mb") or 0), 3)
+                                except (TypeError, ValueError):
+                                    t["size_mb"] = 0.0
+                                if hist.get("is_heap") is not None:
+                                    t["is_heap"] = _as_bit(hist.get("is_heap"))
+                                # Metrics came from ObjSize_History (live capture), not IdxCat.
+                                t["source"] = "capture"
+                                overlaid += 1
+                            if overlaid:
+                                metrics_source = "capture"
+                            deleted_keys = set(latest_map.keys()) - present_keys
+                            deleted_history_rows = self._history_rows_for_keys(
+                                cur, deleted_keys
+                            )
                 finally:
                     conn.close()
         except Exception as ex:
             log.debug("obj size history read failed: %s", ex)
             errors["history"] = str(ex)
 
-        return {
-            "tables": base.get("tables") or [],
-            "source": base.get("source") or "live",
+        result = {
+            "tables": tables,
+            "source": metrics_source,
             "history_available": history_available,
             "history_by_window": history_by_window,
+            "deleted_history_rows": deleted_history_rows,
             "latest_capture_date": latest_capture_date,
             "errors": errors,
             "permissions_hint": base.get("permissions_hint"),
             "note": base.get("note"),
         }
+        _TABLE_GROWTH_CACHE["data"] = result
+        _TABLE_GROWTH_CACHE["ts"] = now
+        return result
 
     def capture_objsize_history(self, *, retention_days: int = 90) -> Dict[str, Any]:
         """Run insight.USP_Insight_ObjSize_Capture (soft-fail if missing)."""
@@ -1415,13 +1688,436 @@ OPTION (MAXRECURSION 200);
     def get_index_overview_snapshot(self, *, deep: bool = False) -> Dict[str, Any]:
         """Finding-oriented environment health.
 
-        Prefers insight.IdxCat_* when populated; otherwise live multi-DB DMV scan.
-        Quick mode: preferred DB first, few DBs. Deep: more DBs from catalog/live.
+        Prefers Index Advisor snapshots (insight.IndexSnapshot), then IdxCat_*,
+        then live multi-DB DMV scan.
         """
+        advisor = self._get_index_overview_from_advisor_snapshot(deep=deep)
+        if advisor is not None:
+            try:
+                self._supplement_advisor_overview(advisor, deep=deep)
+            except Exception as ex:
+                log.debug("advisor overview supplement skipped: %s", ex)
+            return advisor
         catalog = self._get_index_overview_from_catalog(deep=deep)
         if catalog is not None:
             return catalog
         return self._get_index_overview_live(deep=deep)
+
+    def _get_index_overview_from_advisor_snapshot(
+        self, *, deep: bool
+    ) -> Dict[str, Any] | None:
+        """Build overview from latest successful insight.IndexSnapshot run(s)."""
+        row_cap = int(INDEX_OVERVIEW_FINDING_ROWS)
+        wh_writes = int(INDEX_WRITE_HEAVY_MIN_WRITES)
+        wh_diff = int(INDEX_WRITE_HEAVY_MIN_DIFF)
+        wh_ratio = int(INDEX_WRITE_HEAVY_MIN_RATIO)
+        try:
+            conn, _catalog_db = self._open_catalog_connection()
+            if conn is None:
+                return None
+            try:
+                cur = conn.cursor()
+                # Latest successful run that actually has snapshot rows
+                cur.execute(
+                    """
+                    SELECT TOP (1)
+                        r.RunId,
+                        r.CollectedAtUtc,
+                        r.SqlServerStartTime,
+                        r.UptimeHours,
+                        r.ObservedReplicaRole,
+                        r.Status
+                    FROM insight.CollectionRun AS r
+                    WHERE r.Status = N'Success'
+                      AND EXISTS (
+                          SELECT 1 FROM insight.IndexSnapshot AS s
+                          WHERE s.RunId = r.RunId
+                      )
+                    ORDER BY r.CollectedAtUtc DESC
+                    """
+                )
+                run = cur.fetchone()
+                if not run:
+                    return None
+                run_cols = [d[0] for d in cur.description]
+                run_info = dict(zip(run_cols, run))
+                run_id = run_info.get("RunId")
+                if not run_id:
+                    return None
+
+                collected_at = run_info.get("CollectedAtUtc")
+                if collected_at is not None:
+                    if not isinstance(collected_at, datetime):
+                        try:
+                            collected_at = datetime.fromisoformat(str(collected_at))
+                        except (TypeError, ValueError):
+                            collected_at = None
+                    if collected_at is not None:
+                        if collected_at.tzinfo is None:
+                            collected_utc = collected_at.replace(tzinfo=timezone.utc)
+                        else:
+                            collected_utc = collected_at.astimezone(timezone.utc)
+                        age_sec = (
+                            datetime.now(timezone.utc) - collected_utc
+                        ).total_seconds()
+                        if age_sec > int(INDEX_ADVISOR_FRESHNESS_MINUTES) * 60:
+                            log.debug(
+                                "advisor snapshot stale: collected %s, window %sm",
+                                collected_utc,
+                                INDEX_ADVISOR_FRESHNESS_MINUTES,
+                            )
+                            return None
+
+                cur.execute(
+                    """
+                    SELECT DISTINCT DatabaseName
+                    FROM insight.IndexSnapshot
+                    WHERE RunId = ?
+                    ORDER BY DatabaseName
+                    """,
+                    run_id,
+                )
+                all_dbs = [r[0] for r in cur.fetchall() if r and r[0]]
+                databases = self._overview_database_scope(all_dbs, deep=deep)
+                if not databases:
+                    return None
+                placeholders = ",".join("?" for _ in databases)
+
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) AS index_count,
+                           COUNT(DISTINCT DatabaseName) AS databases_scanned
+                    FROM insight.IndexSnapshot
+                    WHERE RunId = ?
+                      AND DatabaseName IN ({placeholders})
+                    """,
+                    run_id,
+                    *databases,
+                )
+                stats = cur.fetchone()
+                index_count = int((stats[0] if stats else 0) or 0)
+                db_scanned = int((stats[1] if stats else 0) or 0)
+
+                cur.execute(
+                    f"""
+                    SELECT TOP ({row_cap})
+                        DatabaseName AS database_name,
+                        SchemaName   AS schema_name,
+                        TableName    AS table_name,
+                        IndexName    AS index_name,
+                        ISNULL(UserUpdates, 0) AS writes,
+                        CAST(SizeMB AS float) AS size_mb
+                    FROM insight.IndexSnapshot
+                    WHERE RunId = ?
+                      AND DatabaseName IN ({placeholders})
+                      AND IndexType = N'NONCLUSTERED'
+                      AND ISNULL(UserSeeks, 0)
+                        + ISNULL(UserScans, 0)
+                        + ISNULL(UserLookups, 0) = 0
+                    ORDER BY ISNULL(UserUpdates, 0) DESC, ISNULL(SizeMB, 0) DESC
+                    """,
+                    run_id,
+                    *databases,
+                )
+                unused_rows = _rows_to_dicts(cur)
+
+                cur.execute(
+                    f"""
+                    SELECT
+                        SUM(CASE
+                            WHEN ISNULL(UserSeeks, 0)
+                               + ISNULL(UserScans, 0)
+                               + ISNULL(UserLookups, 0) = 0
+                             AND ISNULL(UserUpdates, 0) > 0 THEN 1 ELSE 0 END) AS unused_with_writes,
+                        SUM(CASE
+                            WHEN ISNULL(UserSeeks, 0)
+                               + ISNULL(UserScans, 0)
+                               + ISNULL(UserLookups, 0) = 0
+                             AND ISNULL(UserUpdates, 0) > 0
+                            THEN ISNULL(UserUpdates, 0) ELSE 0 END) AS unused_write_ops,
+                        SUM(CASE
+                            WHEN ISNULL(UserSeeks, 0)
+                               + ISNULL(UserScans, 0)
+                               + ISNULL(UserLookups, 0) = 0 THEN 1 ELSE 0 END) AS unused_all
+                    FROM insight.IndexSnapshot
+                    WHERE RunId = ?
+                      AND DatabaseName IN ({placeholders})
+                      AND IndexType = N'NONCLUSTERED'
+                    """,
+                    run_id,
+                    *databases,
+                )
+                unused_stats = cur.fetchone() or (0, 0, 0)
+                unused_with_writes = int(unused_stats[0] or 0)
+                unused_write_ops = int(unused_stats[1] or 0)
+                unused_all = int(unused_stats[2] or 0)
+
+                cur.execute(
+                    f"""
+                    SELECT TOP ({row_cap})
+                        DatabaseName AS database_name,
+                        SchemaName   AS schema_name,
+                        TableName    AS table_name,
+                        IndexName    AS index_name,
+                        ISNULL(UserSeeks, 0)
+                          + ISNULL(UserScans, 0)
+                          + ISNULL(UserLookups, 0) AS reads,
+                        ISNULL(UserUpdates, 0) AS writes,
+                        CAST(SizeMB AS float) AS size_mb
+                    FROM insight.IndexSnapshot
+                    WHERE RunId = ?
+                      AND DatabaseName IN ({placeholders})
+                      AND IndexType = N'NONCLUSTERED'
+                      AND ISNULL(UserSeeks, 0)
+                        + ISNULL(UserScans, 0)
+                        + ISNULL(UserLookups, 0) > 0
+                      AND ISNULL(UserUpdates, 0)
+                        > (ISNULL(UserSeeks, 0)
+                           + ISNULL(UserScans, 0)
+                           + ISNULL(UserLookups, 0))
+                      AND ISNULL(UserUpdates, 0) >= {wh_writes}
+                      AND (
+                            ISNULL(UserUpdates, 0)
+                              - (ISNULL(UserSeeks, 0)
+                                 + ISNULL(UserScans, 0)
+                                 + ISNULL(UserLookups, 0)) >= {wh_diff}
+                         OR ISNULL(UserUpdates, 0) >= {wh_ratio} * (
+                                ISNULL(UserSeeks, 0)
+                              + ISNULL(UserScans, 0)
+                              + ISNULL(UserLookups, 0)
+                            )
+                      )
+                    ORDER BY (
+                        ISNULL(UserUpdates, 0)
+                        - (ISNULL(UserSeeks, 0)
+                           + ISNULL(UserScans, 0)
+                           + ISNULL(UserLookups, 0))
+                    ) DESC
+                    """,
+                    run_id,
+                    *databases,
+                )
+                write_heavy_rows = _rows_to_dicts(cur)
+
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM insight.IndexSnapshot
+                    WHERE RunId = ?
+                      AND DatabaseName IN ({placeholders})
+                      AND IndexType = N'NONCLUSTERED'
+                      AND ISNULL(UserSeeks, 0)
+                        + ISNULL(UserScans, 0)
+                        + ISNULL(UserLookups, 0) > 0
+                      AND ISNULL(UserUpdates, 0)
+                        > (ISNULL(UserSeeks, 0)
+                           + ISNULL(UserScans, 0)
+                           + ISNULL(UserLookups, 0))
+                      AND ISNULL(UserUpdates, 0) >= {wh_writes}
+                      AND (
+                            ISNULL(UserUpdates, 0)
+                              - (ISNULL(UserSeeks, 0)
+                                 + ISNULL(UserScans, 0)
+                                 + ISNULL(UserLookups, 0)) >= {wh_diff}
+                         OR ISNULL(UserUpdates, 0) >= {wh_ratio} * (
+                                ISNULL(UserSeeks, 0)
+                              + ISNULL(UserScans, 0)
+                              + ISNULL(UserLookups, 0)
+                            )
+                      )
+                    """,
+                    run_id,
+                    *databases,
+                )
+                write_heavy_count = int((cur.fetchone() or [0])[0] or 0)
+
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM insight.IndexSnapshot
+                    WHERE RunId = ?
+                      AND DatabaseName IN ({placeholders})
+                      AND FragmentationPercent IS NOT NULL
+                      AND FragmentationPercent >= 30
+                    """,
+                    run_id,
+                    *databases,
+                )
+                high_frag = int((cur.fetchone() or [0])[0] or 0)
+
+                cur.execute(
+                    f"""
+                    SELECT CASE WHEN EXISTS (
+                        SELECT 1 FROM insight.IndexSnapshot
+                        WHERE RunId = ?
+                          AND DatabaseName IN ({placeholders})
+                          AND FragmentationPercent IS NOT NULL
+                    ) THEN 1 ELSE 0 END
+                    """,
+                    run_id,
+                    *databases,
+                )
+                frag_available = bool(int((cur.fetchone() or [0])[0] or 0))
+
+                collected = run_info.get("CollectedAtUtc")
+                uptime_h = run_info.get("UptimeHours")
+                role = run_info.get("ObservedReplicaRole") or ""
+                window_parts = []
+                if collected is not None:
+                    window_parts.append(f"captured {collected}")
+                if uptime_h is not None:
+                    window_parts.append(f"uptime ~{int(uptime_h)}h")
+                if role:
+                    window_parts.append(str(role))
+                window_label = " · ".join(window_parts)
+
+                totals = {
+                    "databases_scanned": db_scanned or len(databases),
+                    "indexes": index_count,
+                    "unused": unused_all if unused_all else len(unused_rows),
+                    "unused_with_writes": unused_with_writes,
+                    "unused_write_ops": unused_write_ops,
+                    "write_heavy": write_heavy_count if write_heavy_count else len(write_heavy_rows),
+                    "heaps": 0,
+                    "high_frag": high_frag,
+                    "missing_suggestions": 0,
+                    "need_review": (unused_all or len(unused_rows))
+                    + (write_heavy_count or len(write_heavy_rows)),
+                }
+                db_list = self.list_user_databases()
+                return {
+                    "sqlserver_start_time": run_info.get("SqlServerStartTime"),
+                    "databases_available": len(db_list.get("databases") or all_dbs),
+                    "databases_scanned_list": databases,
+                    "scan_mode": "deep" if deep else "quick",
+                    "source": "advisor_snapshot",
+                    "frag_available": frag_available,
+                    "frag_loaded": frag_available,
+                    "advisor_meta": {
+                        "run_id": str(run_id),
+                        "collected_at_utc": str(collected) if collected is not None else None,
+                        "window_label": window_label,
+                        "observed_replica_role": role or None,
+                        "freshness_minutes": int(INDEX_ADVISOR_FRESHNESS_MINUTES),
+                    },
+                    "totals": totals,
+                    "write_heavy": write_heavy_rows[:row_cap],
+                    "unused": unused_rows[:row_cap],
+                    "heaps": [],
+                    "missing_by_table": [],
+                    "errors": {},
+                    "permissions_hint": db_list.get("permissions_hint"),
+                }
+            finally:
+                conn.close()
+        except Exception as ex:
+            log.debug("index advisor snapshot overview unavailable: %s", ex)
+            return None
+
+    def _supplement_advisor_overview(self, advisor: Dict[str, Any], *, deep: bool) -> None:
+        """Fill KPI gaps Advisor Phase 1 leaves empty (missing DMV, duplicates)."""
+        databases = list(advisor.get("databases_scanned_list") or [])
+        if not databases:
+            return
+        row_cap = int(INDEX_OVERVIEW_FINDING_ROWS)
+        missing_by_table: List[Dict[str, Any]] = list(advisor.get("missing_by_table") or [])
+        missing_count = int((advisor.get("totals") or {}).get("missing_suggestions") or 0)
+        dup_count = int((advisor.get("totals") or {}).get("duplicates") or 0)
+        run_id = (advisor.get("advisor_meta") or {}).get("run_id")
+
+        try:
+            conn, _catalog_db = self._open_catalog_connection()
+            if conn is not None:
+                try:
+                    cur = conn.cursor()
+                    if run_id and not missing_by_table:
+                        try:
+                            cur.execute(
+                                f"""
+                                SELECT TOP ({row_cap})
+                                    DatabaseName AS database_name,
+                                    SchemaName AS schema_name,
+                                    TableName AS table_name,
+                                    ISNULL(ImprovementScore, 0) AS impact_score,
+                                    AvgUserImpact AS avg_user_impact,
+                                    UserSeeks AS user_seeks
+                                FROM insight.MissingIndexSnapshot
+                                WHERE RunId = ?
+                                ORDER BY ISNULL(ImprovementScore, 0) DESC
+                                """,
+                                run_id,
+                            )
+                            missing_by_table = _rows_to_dicts(cur)
+                            if missing_by_table:
+                                cur.execute(
+                                    "SELECT COUNT(*) FROM insight.MissingIndexSnapshot WHERE RunId = ?",
+                                    run_id,
+                                )
+                                missing_count = int((cur.fetchone() or [0])[0] or 0)
+                        except Exception:
+                            pass
+
+                    if dup_count <= 0:
+                        try:
+                            placeholders = ",".join("?" for _ in databases)
+                            cur.execute(
+                                f"""
+                                SELECT COUNT(*) FROM (
+                                    SELECT database_name, schema_name, table_name,
+                                           key_cols, include_cols, ISNULL(filter_def, N'') AS filter_def
+                                    FROM insight.IdxCat_Index
+                                    WHERE database_name IN ({placeholders})
+                                      AND index_id > 0
+                                    GROUP BY database_name, schema_name, table_name,
+                                             key_cols, include_cols, ISNULL(filter_def, N'')
+                                    HAVING COUNT(*) > 1
+                                ) AS d
+                                """,
+                                *databases,
+                            )
+                            dup_count = int((cur.fetchone() or [0])[0] or 0)
+                        except Exception:
+                            pass
+                finally:
+                    conn.close()
+        except Exception as ex:
+            log.debug("advisor supplement catalog: %s", ex)
+
+        if not missing_by_table and deep:
+            peek_limit = len(databases)
+            for db in databases[:peek_limit]:
+                try:
+                    live = _connect_to_database(db)
+                    try:
+                        try:
+                            live.timeout = int(INDEX_OVERVIEW_DB_TIMEOUT_SEC)
+                        except Exception:
+                            pass
+                        lcur = live.cursor()
+                        lcur.execute(
+                            _OVERVIEW_MISSING_IMPACT_SQL.format(top=row_cap)
+                        )
+                        for r in _rows_to_dicts(lcur):
+                            r["database_name"] = db
+                            missing_by_table.append(r)
+                        lcur.execute(
+                            "SELECT COUNT(*) FROM sys.dm_db_missing_index_details WHERE database_id = DB_ID()"
+                        )
+                        missing_count += int((lcur.fetchone() or [0])[0] or 0)
+                    finally:
+                        live.close()
+                except Exception as ex:
+                    log.debug("advisor missing peek %s: %s", db, ex)
+
+        totals = dict(advisor.get("totals") or {})
+        if missing_by_table:
+            advisor["missing_by_table"] = missing_by_table[:row_cap]
+            totals["missing_suggestions"] = missing_count or len(missing_by_table)
+        if dup_count > 0:
+            totals["duplicates"] = dup_count
+        advisor["totals"] = totals
+        if missing_by_table or dup_count:
+            advisor["kpi_supplement"] = "live_dmv_peek"
 
     def _overview_database_scope(
         self, all_dbs: List[str], *, deep: bool
@@ -2366,6 +3062,26 @@ INNER JOIN sys.dm_db_missing_index_group_stats migs ON migs.group_handle = mig.i
 WHERE mid.database_id = DB_ID()
 GROUP BY mid.object_id
 ORDER BY COUNT(*) DESC, SUM(migs.user_seeks) DESC;
+"""
+
+_OVERVIEW_MISSING_IMPACT_SQL = """
+SET NOCOUNT ON;
+SELECT TOP ({top})
+    OBJECT_SCHEMA_NAME(mid.object_id) AS schema_name,
+    OBJECT_NAME(mid.object_id) AS table_name,
+    mid.object_id,
+    SUM(migs.user_seeks) AS user_seeks,
+    MAX(migs.avg_user_impact) AS avg_user_impact,
+    MAX(migs.avg_total_user_cost) AS avg_total_user_cost,
+    CAST(SUM(
+        migs.avg_total_user_cost * (migs.avg_user_impact / 100.0) * migs.user_seeks
+    ) AS bigint) AS impact_score
+FROM sys.dm_db_missing_index_details mid
+INNER JOIN sys.dm_db_missing_index_groups mig ON mig.index_handle = mid.index_handle
+INNER JOIN sys.dm_db_missing_index_group_stats migs ON migs.group_handle = mig.index_handle
+WHERE mid.database_id = DB_ID()
+GROUP BY mid.object_id, OBJECT_SCHEMA_NAME(mid.object_id), OBJECT_NAME(mid.object_id)
+ORDER BY impact_score DESC;
 """
 
 

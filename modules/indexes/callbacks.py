@@ -3,13 +3,11 @@ from __future__ import annotations
 
 from dash import ALL, Input, Output, State, ctx, html, no_update
 
+from core.i18n import normalize_locale, t
 from core.logging_setup import get_logger
 from core.permissions import INDEX_PERMISSIONS_HINT
 from core.providers.sqlserver_provider import get_provider
-from modules.indexes.constants import (
-    INDEX_DB_ALL,
-    INDEX_TABLE_SEARCH_MIN_CHARS,
-)
+from modules.indexes.constants import INDEX_DB_ALL
 from modules.indexes.layout import (
     _tab_cls,
     db_label,
@@ -18,11 +16,13 @@ from modules.indexes.layout import (
     render_explorer,
     render_explorer_idle,
     render_frag_status,
-    render_search_results,
     render_selected_table,
 )
 from modules.indexes.panels import (
+    explorer_page_meta,
+    filter_explorer_tables,
     render_catalog_status,
+    render_explorer_pagination_info,
     render_explorer_table_list,
     render_overview,
     render_triage_detail,
@@ -56,56 +56,22 @@ def _visible_tables(
     cache: dict | None,
     query: str,
     sort_key: str,
-    selected: dict | None = None,
-) -> list[dict]:
-    tables = list((cache or {}).get("tables") or [])
-    cache_db = (cache or {}).get("database") or ""
-    q = (query or "").strip().lower()
-    if q:
-        tables = [
-            t
-            for t in tables
-            if q in str(t.get("full_name") or "").lower()
-            or q in str(t.get("table_name") or "").lower()
-            or q in str(t.get("database_name") or cache_db or "").lower()
-        ]
+    page: int = 1,
+) -> tuple[list[dict], int, int, int, int, int]:
+    """Return (page_rows, total, page, total_pages, start_n, end_n). Search filters only — no pin."""
+    from modules.indexes.constants import INDEX_EXPLORER_PAGE_SIZE
 
-    def sort_val(t):
-        if sort_key == "schema":
-            return str(t.get("schema_name") or "").lower()
-        if sort_key == "rows":
-            try:
-                return -float(t.get("row_count") or 0)
-            except (TypeError, ValueError):
-                return 0
-        if sort_key == "heap":
-            return 0 if t.get("is_heap") else 1
-        return str(t.get("table_name") or "").lower()
-
-    visible = sorted(tables, key=sort_val)[:500]
-    if selected and selected.get("table"):
-        sel_schema = selected.get("schema") or "dbo"
-        sel_table = selected.get("table")
-        sel_db = selected.get("database")
-
-        def _is_sel(t: dict) -> bool:
-            return (
-                (t.get("schema_name") or "dbo") == sel_schema
-                and (t.get("table_name") or "") == sel_table
-                and (not sel_db or (t.get("database_name") or cache_db) == sel_db)
-            )
-
-        if not any(_is_sel(t) for t in visible):
-            pinned = next((t for t in ((cache or {}).get("tables") or []) if _is_sel(t)), None)
-            if pinned is None:
-                pinned = {
-                    "database_name": sel_db or cache_db,
-                    "schema_name": sel_schema,
-                    "table_name": sel_table,
-                    "full_name": selected.get("full_name") or f"{sel_schema}.{sel_table}",
-                }
-            visible = [pinned] + visible[:499]
-    return visible
+    filtered = filter_explorer_tables(cache, query, sort_key=sort_key or "table")
+    total = len(filtered)
+    page, total_pages, start, start_n, end_n = explorer_page_meta(total, page)
+    return (
+        filtered[start : start + INDEX_EXPLORER_PAGE_SIZE],
+        total,
+        page,
+        total_pages,
+        start_n,
+        end_n,
+    )
 
 
 def register_indexes_callbacks(app):
@@ -444,20 +410,26 @@ def register_indexes_callbacks(app):
         Output("indexes-table-cache-hint", "children"),
         Input("indexes-db-dropdown", "data"),
         Input("store-indexes-catalog-version", "data"),
+        Input("store-indexes-tab", "data"),
         State("store-module", "data"),
+        State("store-locale", "data"),
         prevent_initial_call=True,
     )
-    def load_table_cache(database, _ver, module):
+    def load_table_cache(database, _ver, tab, module, locale):
+        loc = normalize_locale(locale)
         if module != "indexes" or not database:
-            return None, ""
+            return no_update, no_update
+        # Only load when Explorer is active (or DB/catalog just changed while there)
+        if tab and tab != "explorer" and ctx.triggered_id == "store-indexes-tab":
+            return no_update, no_update
         try:
             raw = get_provider().list_tables(database, all_for_db=True)
             tables = raw.get("tables") or []
             source = raw.get("source") or "live"
             # Ensure each row has database_name for All / DATABASE column
             if database != INDEX_DB_ALL:
-                for t in tables:
-                    t.setdefault("database_name", database)
+                for row in tables:
+                    row.setdefault("database_name", database)
             cache = {
                 "database": database,
                 "tables": tables,
@@ -466,18 +438,17 @@ def register_indexes_callbacks(app):
             }
             if not tables:
                 if database == INDEX_DB_ALL:
-                    hint = "No catalog tables yet — run Update catalog first."
+                    hint = t("indexes.hint.no_catalog", loc)
                 else:
-                    hint = "No tables found for this database."
+                    hint = t("indexes.hint.no_tables_db", loc)
             elif source == "catalog":
                 from core.formatters import fmt_int
 
-                scope = "all databases" if database == INDEX_DB_ALL else "catalog"
-                hint = f"Loaded {fmt_int(len(tables))} tables from {scope} — search is local/fast."
+                hint = t("indexes.hint.loaded_catalog", loc, n=fmt_int(len(tables)))
             else:
                 from core.formatters import fmt_int
 
-                hint = f"Loaded {fmt_int(len(tables))} tables (live) — catalog empty for this DB."
+                hint = t("indexes.hint.loaded_live", loc, n=fmt_int(len(tables)))
             return cache, hint
         except Exception as ex:
             log.exception("table cache load failed")
@@ -604,9 +575,10 @@ def register_indexes_callbacks(app):
         State("store-indexes-overview", "data"),
         State("store-indexes-triage-filter", "data"),
         State("store-indexes-selected-finding", "data"),
+        State("store-locale", "data"),
         prevent_initial_call=True,
     )
-    def load_overview(module, tab, _refresh, _deep, catalog_ver, existing, filt, selected_id):
+    def load_overview(module, tab, _refresh, _deep, catalog_ver, existing, filt, selected_id, locale):
         if module != "indexes":
             return (no_update,) * 12
         tab = tab or "overview"
@@ -635,7 +607,7 @@ def register_indexes_callbacks(app):
             badge_n = triage_filter_counts(all_findings).get("critical") or 0
             return (
                 payload,
-                render_overview(payload),
+                render_overview(payload, locale=normalize_locale(locale)),
                 render_triage_subbar(payload, filt),
                 render_triage_rail(payload, filt, sel_id),
                 render_triage_detail(finding),
@@ -645,7 +617,7 @@ def register_indexes_callbacks(app):
                 hide_ov,
                 _TOAST_HIDDEN,
                 no_update,
-                triage_badge_children(badge_n),
+                triage_badge_children(badge_n, locale),
             )
 
         if existing and not force_refresh and not deep and trig in ("store-module", "store-indexes-tab"):
@@ -705,7 +677,7 @@ def register_indexes_callbacks(app):
                 hide_ov,
                 _TOAST_ERROR,
                 f"Overview failed: {ex}",
-                triage_badge_children(0),
+                triage_badge_children(0, locale),
             )
 
     # Immediate loading overlay for Overview/Triage (panel-local, not shell-tall).
@@ -858,145 +830,26 @@ def register_indexes_callbacks(app):
         }
         return "explorer", db, db_label(db), sel, render_selected_table(sel)
 
-    # Typing → cache-backed instant filter, else debounce + spinner
+    # List filter is server-side (like Tables & Growth) — no dropdown hits.
     app.clientside_callback(
         """
-        function(value, cache) {
-            const minChars = 2;
-            const q = (value || '').trim();
-            const tables = (cache && cache.tables) ? cache.tables : [];
-            const hasCache = tables.length > 0;
+        function(value) {
             const empty = {
                 namespace: 'dash_html_components',
                 type: 'Div',
                 props: {className: 'indexes-search-results-empty'}
             };
-            if (q.length < minChars) {
-                return [true, 0, 'indexes-search-spinner hidden', empty, []];
-            }
-            if (hasCache) {
-                const ql = q.toLowerCase();
-                const hits = [];
-                for (let i = 0; i < tables.length && hits.length < 30; i++) {
-                    const t = tables[i];
-                    const fn = String(t.full_name || '').toLowerCase();
-                    const tn = String(t.table_name || '').toLowerCase();
-                    if (fn.indexOf(ql) >= 0 || tn.indexOf(ql) >= 0) hits.push(t);
-                }
-                if (!hits.length) {
-                    return [true, 0, 'indexes-search-spinner hidden', {
-                        namespace: 'dash_html_components',
-                        type: 'Div',
-                        props: {
-                            className: 'indexes-search-list',
-                            children: [{
-                                namespace: 'dash_html_components',
-                                type: 'Div',
-                                props: {
-                                    className: 'indexes-search-hint',
-                                    children: 'No tables matching \\"' + q + '\\".'
-                                }
-                            }]
-                        }
-                    }, []];
-                }
-                const children = hits.map(function(t, i) {
-                    const label = t.full_name || ((t.schema_name || '') + '.' + (t.table_name || ''));
-                    return {
-                        namespace: 'dash_html_components',
-                        type: 'Button',
-                        props: {
-                            children: label,
-                            id: {type: 'indexes-search-hit', index: i},
-                            className: 'indexes-search-hit',
-                            n_clicks: 0,
-                            type: 'button',
-                            title: label
-                        }
-                    };
-                });
-                return [true, 0, 'indexes-search-spinner hidden', {
-                    namespace: 'dash_html_components',
-                    type: 'Div',
-                    props: {className: 'indexes-search-list', children: children}
-                }, hits];
-            }
-            return [false, 0, 'indexes-search-spinner', {
-                namespace: 'dash_html_components',
-                type: 'Div',
-                props: {
-                    className: 'indexes-search-list is-loading',
-                    children: [{
-                        namespace: 'dash_html_components',
-                        type: 'Div',
-                        props: {
-                            className: 'indexes-search-loading-row',
-                            children: [
-                                {namespace:'dash_html_components', type:'Span', props:{className:'indexes-search-spinner is-inline'}},
-                                {namespace:'dash_html_components', type:'Span', props:{
-                                    className:'indexes-search-hint',
-                                    children: 'Searching tables…'
-                                }}
-                            ]
-                        }
-                    }]
-                }
-            }, window.dash_clientside.no_update];
+            return [true, 0, 'indexes-search-spinner hidden', empty, []];
         }
         """,
         Output("indexes-search-debounce", "disabled"),
         Output("indexes-search-debounce", "n_intervals"),
         Output("indexes-search-spinner", "className"),
-        Output("indexes-search-results", "children", allow_duplicate=True),
-        Output("store-indexes-search-results", "data", allow_duplicate=True),
-        Input("indexes-table-search", "value"),
-        State("store-indexes-table-cache", "data"),
-        prevent_initial_call=True,
-    )
-
-    @app.callback(
-        Output("store-indexes-search-results", "data"),
         Output("indexes-search-results", "children"),
-        Output("indexes-search-debounce", "disabled", allow_duplicate=True),
-        Output("indexes-search-spinner", "className", allow_duplicate=True),
-        Input("indexes-search-debounce", "n_intervals"),
-        State("indexes-table-search", "value"),
-        State("indexes-db-dropdown", "data"),
-        State("store-indexes-table-cache", "data"),
-        State("store-module", "data"),
-        prevent_initial_call=True,
-    )
-    def search_tables(_n, query, database, cache, module):
-        if cache and (cache.get("tables") or []):
-            return (no_update,) * 4
-        if module != "indexes" or not database:
-            return [], render_search_results([], query or ""), True, "indexes-search-spinner hidden"
-        q = (query or "").strip()
-        if len(q) < INDEX_TABLE_SEARCH_MIN_CHARS:
-            return [], render_search_results([], q), True, "indexes-search-spinner hidden"
-        try:
-            raw = get_provider().list_tables(database, search=q)
-            rows = raw.get("tables") or []
-            return rows, render_search_results(rows, q), True, "indexes-search-spinner hidden"
-        except Exception as ex:
-            log.exception("table search failed")
-            return (
-                [],
-                html.Div(f"Search failed: {ex}", className="indexes-search-hint"),
-                True,
-                "indexes-search-spinner hidden",
-            )
-
-    @app.callback(
-        Output("store-indexes-search-results", "data", allow_duplicate=True),
+        Output("store-indexes-search-results", "data"),
         Input("indexes-table-search", "value"),
         prevent_initial_call=True,
     )
-    def clear_search_store(query):
-        q = (query or "").strip()
-        if len(q) < INDEX_TABLE_SEARCH_MIN_CHARS:
-            return []
-        return no_update
 
     @app.callback(
         Output("store-indexes-table-sort", "data"),
@@ -1029,19 +882,53 @@ def register_indexes_callbacks(app):
         return key, cls("schema"), cls("table"), cls("heap"), cls("rows")
 
     @app.callback(
+        Output("store-indexes-table-page", "data"),
+        Input("btn-indexes-ex-page-prev", "n_clicks"),
+        Input("btn-indexes-ex-page-next", "n_clicks"),
+        Input("indexes-table-search", "value"),
+        Input("store-indexes-table-sort", "data"),
+        Input("store-indexes-table-cache", "data"),
+        State("store-indexes-table-page", "data"),
+        prevent_initial_call=True,
+    )
+    def paginate_explorer(_prev, _next, _search, _sort, _cache, page):
+        tid = ctx.triggered_id
+        page = int(page or 1)
+        if tid == "btn-indexes-ex-page-prev":
+            return max(1, page - 1)
+        if tid == "btn-indexes-ex-page-next":
+            return page + 1
+        return 1
+
+    @app.callback(
         Output("indexes-explorer-table-list", "children"),
         Output("store-indexes-table-visible", "data"),
+        Output("indexes-ex-pagination-info", "children"),
+        Output("indexes-ex-page-pos", "children"),
+        Output("btn-indexes-ex-page-prev", "disabled"),
+        Output("btn-indexes-ex-page-next", "disabled"),
+        Output("indexes-ex-pagination", "className"),
         Input("store-indexes-table-cache", "data"),
         Input("indexes-table-search", "value"),
         Input("store-indexes-table-sort", "data"),
         Input("store-indexes-selected-table", "data"),
+        Input("store-indexes-table-page", "data"),
+        State("store-locale", "data"),
         prevent_initial_call=True,
     )
-    def render_table_list(cache, query, sort_key, selected):
+    def render_table_list(cache, query, sort_key, selected, page, locale):
         sort_key = sort_key or "table"
-        visible = _visible_tables(cache, query or "", sort_key, selected)
+        page = int(page or 1)
+        visible, total, page, total_pages, start_n, end_n = _visible_tables(
+            cache, query or "", sort_key, page
+        )
+        pager_cls = "tables-pagination idx-ex-pagination"
+        if not cache or total == 0:
+            pager_cls += " hidden"
         return (
-            render_explorer_table_list(cache, selected, query or "", sort_key=sort_key),
+            render_explorer_table_list(
+                cache, selected, query or "", sort_key=sort_key, page=page, locale=locale
+            ),
             [
                 {
                     "schema_name": t.get("schema_name"),
@@ -1051,6 +938,11 @@ def register_indexes_callbacks(app):
                 }
                 for t in visible
             ],
+            render_explorer_pagination_info(total, page, total_pages, start_n, end_n),
+            f"{page} / {total_pages}",
+            page <= 1,
+            page >= total_pages,
+            pager_cls,
         )
 
     @app.callback(
@@ -1090,9 +982,10 @@ def register_indexes_callbacks(app):
                 return (no_update,) * 8
             t = visible[idx]
         elif trig == "indexes-table-search":
-            if not n_submit or not results:
+            # Enter → first row of the filtered list (Tables & Growth style)
+            if not n_submit or not visible:
                 return (no_update,) * 8
-            t = results[0]
+            t = visible[0]
         if not t:
             return (no_update,) * 8
         row_db = t.get("database_name")
@@ -1163,15 +1056,18 @@ def register_indexes_callbacks(app):
         Output("indexes-view-status", "className"),
         Input("indexes-view-recommendations", "n_clicks"),
         Input("indexes-view-status", "n_clicks"),
+        Input({"type": "indexes-ex-review", "name": ALL}, "n_clicks"),
         State("store-indexes-explorer-view", "data"),
         prevent_initial_call=True,
     )
-    def switch_explorer_view(_r, _s, current):
+    def switch_explorer_view(_r, _s, _review_clicks, current):
         trig = ctx.triggered_id
         view = current or "recommendations"
         if trig == "indexes-view-status":
             view = "status"
         elif trig == "indexes-view-recommendations":
+            view = "recommendations"
+        elif isinstance(trig, dict) and trig.get("type") == "indexes-ex-review":
             view = "recommendations"
         rec_cls = "indexes-subtab active" if view == "recommendations" else "indexes-subtab"
         st_cls = "indexes-subtab active" if view == "status" else "indexes-subtab"
@@ -1192,12 +1088,14 @@ def register_indexes_callbacks(app):
         State("store-indexes-tab", "data"),
         State("store-module", "data"),
         State("store-indexes", "data"),
+        State("store-locale", "data"),
         prevent_initial_call=True,
     )
-    def load_explorer(sel, _refresh, view, tab, module, existing):
+    def load_explorer(sel, _refresh, view, tab, module, existing, locale):
         """Kick off table intelligence in a background thread (avoid Page Unresponsive)."""
         from modules.indexes.table_jobs import start_table_intelligence
 
+        loc = normalize_locale(locale)
         if module != "indexes":
             return (no_update,) * 8
         tab = tab or "overview"
@@ -1222,7 +1120,7 @@ def register_indexes_callbacks(app):
         if trig == "store-indexes-explorer-view" and existing:
             return (
                 existing,
-                render_explorer(existing, selected=sel, view=view),
+                render_explorer(existing, selected=sel, view=view, locale=loc),
                 "idx-ex-loading hidden",
                 _TOAST_HIDDEN,
                 no_update,
@@ -1234,6 +1132,7 @@ def register_indexes_callbacks(app):
         job_id = start_table_intelligence(sel["database"], sel["schema"], sel["table"])
         return (
             no_update,
+            # Keep body as-is; fixed overlay is the only loading UI
             no_update,
             "idx-ex-loading",
             _TOAST_HIDDEN,
@@ -1256,11 +1155,13 @@ def register_indexes_callbacks(app):
         State("store-indexes-table-job", "data"),
         State("store-indexes-selected-table", "data"),
         State("store-indexes-explorer-view", "data"),
+        State("store-locale", "data"),
         prevent_initial_call=True,
     )
-    def poll_table_job(_n, job_id, sel, view):
+    def poll_table_job(_n, job_id, sel, view, locale):
         from modules.indexes.table_jobs import get_table_job
 
+        loc = normalize_locale(locale)
         job = get_table_job(job_id)
         if not job or job.get("status") == "running":
             return (no_update,) * 8
@@ -1287,7 +1188,7 @@ def register_indexes_callbacks(app):
         payload = job.get("payload") or {}
         return (
             payload,
-            render_explorer(payload, selected=sel, view=view),
+            render_explorer(payload, selected=sel, view=view, locale=loc),
             "idx-ex-loading hidden",
             _TOAST_HIDDEN,
             no_update,
@@ -1321,11 +1222,13 @@ def register_indexes_callbacks(app):
             if (id === 'store-indexes-selected-table' || (id === 'btn-indexes-refresh' && tab === 'explorer')) {
                 const label = (sel.schema || '') + '.' + (sel.table || '');
                 setTimeout(function() {
-                    const row = document.querySelector('.indexes-ex-row.is-selected');
-                    if (row && typeof row.scrollIntoView === 'function') {
-                        row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                    // Jump past the long table list to the detail panel
+                    const detail = document.getElementById('indexes-explorer-subtabs-bar')
+                        || document.getElementById('indexes-explorer-body');
+                    if (detail && typeof detail.scrollIntoView === 'function') {
+                        detail.scrollIntoView({ block: 'start', behavior: 'smooth' });
                     }
-                }, 80);
+                }, 60);
                 return ['idx-ex-loading', 'Loading table intelligence for ' + label + '…'];
             }
             return [no, no];
@@ -1348,11 +1251,13 @@ def register_indexes_callbacks(app):
         State("store-indexes", "data"),
         State("store-indexes-selected-table", "data"),
         State("store-indexes-explorer-view", "data"),
+        State("store-locale", "data"),
         prevent_initial_call=True,
     )
-    def load_frag(n, payload, sel, view):
+    def load_frag(n, payload, sel, view, locale):
         if not n or not payload or not sel:
             return no_update, no_update, no_update
+        loc = normalize_locale(locale)
         frag = get_provider().get_table_index_frag(sel["database"], sel["schema"], sel["table"])
         if frag.get("errors"):
             return (
@@ -1363,7 +1268,7 @@ def register_indexes_callbacks(app):
         updated = apply_frag_to_payload(dict(payload), frag.get("frag_rows") or [])
         return (
             updated,
-            render_explorer(updated, selected=sel, view=view or "recommendations"),
+            render_explorer(updated, selected=sel, view=view or "recommendations", locale=loc),
             render_frag_status(ok=True),
         )
 

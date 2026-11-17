@@ -11,7 +11,11 @@ from datetime import datetime
 
 from dash import html
 
+import math
+
 from core.formatters import fmt_compact, fmt_int, fmt_size_mb
+from core.i18n import DEFAULT_LOCALE, normalize_locale, t
+from modules.indexes.constants import INDEX_CONFIDENCE_SCRIPT_MIN, INDEX_EXPLORER_PAGE_SIZE
 from modules.indexes.triage import (
     filter_triage_findings,
     per_database_summary,
@@ -22,16 +26,90 @@ from modules.indexes.triage import (
 _SEVERITY_LABEL = {"critical": "CRITICAL", "warning": "WARNING", "watch": "WATCH"}
 
 _CARD_ICON = {
-    "unused": "⛔",
-    "write_heavy": "✍",
-    "heap": "▦",
-    "missing": "＋",
+    "unused": "unused",
+    "write_heavy": "write",
+    "heap": "heap",
+    "missing": "missing",
 }
 
-_TONE_ICON = {"critical": "●", "warning": "▲", "watch": "◆"}
+_TONE_ICON = {"critical": "critical", "warning": "warning", "watch": "watch"}
 
-_EXPLORER_ROW_CAP = 500
 _PER_DB_CAP = 8
+
+
+def _as_heap(v) -> bool:
+    if v is None or v is False:
+        return False
+    if v is True:
+        return True
+    if isinstance(v, (bytes, bytearray, memoryview)):
+        b = bytes(v)
+        return len(b) > 0 and b[0] != 0
+    if isinstance(v, (int, float)):
+        return int(v) != 0
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "heap")
+    return bool(v)
+
+
+def filter_explorer_tables(
+    cache: dict | None,
+    query: str = "",
+    *,
+    sort_key: str = "table",
+) -> list[dict]:
+    """Filter/sort explorer rows — search matches schema.table, DB, or type (heap/clustered)."""
+    if not cache:
+        return []
+    cache_db = cache.get("database") or ""
+    tables = list(cache.get("tables") or [])
+    q = (query or "").strip().lower()
+    if q:
+        out = []
+        for t in tables:
+            is_heap = _as_heap(t.get("is_heap"))
+            type_label = "heap" if is_heap else "clustered"
+            blob = (
+                f"{t.get('schema_name')}.{t.get('table_name')} "
+                f"{t.get('database_name') or cache_db} {type_label}"
+            ).lower()
+            if q in ("heap", "heaps"):
+                if is_heap:
+                    out.append(t)
+            elif q in ("clustered", "cluster", "ci"):
+                if not is_heap:
+                    out.append(t)
+            elif (
+                q in blob
+                or q in str(t.get("full_name") or "").lower()
+                or q in str(t.get("table_name") or "").lower()
+            ):
+                out.append(t)
+        tables = out
+
+    def sort_val(t: dict):
+        if sort_key == "schema":
+            return str(t.get("schema_name") or "").lower()
+        if sort_key == "rows":
+            try:
+                return -float(t.get("row_count") or 0)
+            except (TypeError, ValueError):
+                return 0
+        if sort_key == "heap":
+            return 0 if _as_heap(t.get("is_heap")) else 1
+        return str(t.get("table_name") or "").lower()
+
+    return sorted(tables, key=sort_val)
+
+
+def explorer_page_meta(total: int, page: int) -> tuple[int, int, int, int, int]:
+    page_size = int(INDEX_EXPLORER_PAGE_SIZE)
+    total_pages = max(1, math.ceil(total / page_size)) if total else 1
+    page = max(1, min(int(page or 1), total_pages))
+    start = (page - 1) * page_size
+    start_n = start + 1 if total else 0
+    end_n = min(page * page_size, total)
+    return page, total_pages, start, start_n, end_n
 
 
 def _fmt_size(mb) -> str:
@@ -70,16 +148,52 @@ def _short_time(value) -> str | None:
     return None
 
 
-def triage_badge_children(count: int):
+def triage_badge_children(count: int, locale: str = DEFAULT_LOCALE):
     """Tab label children for the Triage main tab — badge only when count > 0."""
+    loc = normalize_locale(locale)
+    label = t("indexes.tab.triage", loc)
     if count:
-        return ["Triage", html.Span(str(count), className="indexes-ii-badge")]
-    return "Triage"
+        return [label, html.Span(str(count), className="indexes-ii-badge")]
+    return label
 
 
 # ---------------------------------------------------------------------------
 # Overview
 # ---------------------------------------------------------------------------
+
+
+def _render_health_gauge(
+    *,
+    score: int,
+    ok_count: int,
+    indexes: int,
+    status_label: str,
+    tone: str,
+) -> html.Div:
+    """Circular score gauge — Needs optimization · 9/11 · 85/100."""
+    pct = max(0, min(100, int(score)))
+    ring_style = {"--idx-gauge-pct": str(pct)}
+    return html.Div(
+        className=f"idx-health-gauge {tone}",
+        dir="ltr",
+        children=[
+            html.Div(
+                className="idx-health-gauge-ring",
+                style=ring_style,
+                children=[html.Span(str(pct), className="idx-health-gauge-score")],
+            ),
+            html.Div(
+                className="idx-health-gauge-meta",
+                children=[
+                    html.Span(status_label, className="idx-health-gauge-label"),
+                    html.Span(
+                        f"{fmt_int(ok_count)}/{fmt_int(indexes)} · {pct}/100",
+                        className="idx-health-gauge-sub",
+                    ),
+                ],
+            ),
+        ],
+    )
 
 
 def render_overview_idle() -> html.Div:
@@ -110,120 +224,129 @@ def render_overview_idle() -> html.Div:
     )
 
 
-def render_overview(payload: dict | None):
+def render_overview(payload: dict | None, locale: str = DEFAULT_LOCALE):
     if not payload:
         return render_overview_idle()
 
+    from modules.indexes.service import compute_overview_kpis
+
+    loc = normalize_locale(locale)
     totals = payload.get("totals") or {}
     findings = payload.get("findings") or []
     counts = triage_filter_counts(findings)
+    kpis = payload.get("kpis") or compute_overview_kpis(payload)
+    cat_counts: dict[str, int] = {}
+    for f in findings:
+        c = f.get("category") or ""
+        cat_counts[c] = cat_counts.get(c, 0) + 1
+    if kpis.get("missing_impact") is not None:
+        kpis["missing_impact"]["badge"] = cat_counts.get("missing") or int(
+            totals.get("missing_suggestions") or 0
+        )
+    if kpis.get("dead_unused_writes") is not None:
+        kpis["dead_unused_writes"]["badge"] = cat_counts.get("unused", 0) + cat_counts.get(
+            "write_heavy", 0
+        )
+    if kpis.get("duplicate_debt") is not None:
+        kpis["duplicate_debt"]["badge"] = cat_counts.get("duplicate") or int(
+            totals.get("duplicates") or 0
+        )
+    if kpis.get("high_frag") is not None and kpis["high_frag"].get("display") == "int":
+        kpis["high_frag"]["badge"] = int(kpis["high_frag"].get("value") or 0)
 
     indexes = int(totals.get("indexes") or 0)
     need_review = int(totals.get("need_review") or 0)
     ok_count = max(0, indexes - need_review)
-
     if indexes <= 0:
         health_score = 100 if need_review == 0 else 50
     else:
         ratio = min(1.0, need_review / max(indexes, 1))
         health_score = int(round(100 * (1.0 - ratio * 0.85)))
-    ring_pct = f"{health_score}%"
     is_healthy = need_review == 0
-    status_label = "Healthy" if is_healthy else "Needs attention"
+    status_label = t("indexes.health.ok", loc) if is_healthy else t("indexes.health.needs", loc)
     status_tone = "is-healthy" if is_healthy else "is-attention"
 
-    health_card = html.Div(
-        className="idx-health-card",
+    src = (payload.get("source") or "live").lower()
+    if src.startswith("advisor"):
+        src_label = t("indexes.source.advisor", loc)
+    elif src == "catalog":
+        src_label = t("indexes.source.catalog", loc)
+    else:
+        src_label = t("indexes.source.live", loc)
+    meta = payload.get("advisor_meta") or {}
+    window = meta.get("window_label") or ""
+
+    header_bar = html.Div(
+        className="idx-overview-source",
         children=[
-            html.Div(
-                className="indexes-health-ring",
-                style={"--idx-ring-pct": ring_pct},
-                children=[
-                    html.Div(
-                        className="indexes-health-ring-inner",
-                        children=[
-                            html.Div(str(health_score), className="indexes-health-ring-score"),
-                            html.Div("/ 100", className="idx-health-ring-max"),
-                        ],
-                    )
-                ],
-            ),
-            html.Div(status_label, className=f"idx-health-status {status_tone}"),
-            html.Div(
-                f"{fmt_int(ok_count)}/{fmt_int(indexes)} indexes OK",
-                className="idx-health-sub",
-                dir="ltr",
+            html.Span(src_label, className="idx-overview-source-label"),
+            html.Span(window, className="idx-overview-source-window", dir="ltr") if window else None,
+            _render_health_gauge(
+                score=health_score,
+                ok_count=ok_count,
+                indexes=indexes,
+                status_label=status_label,
+                tone=status_tone,
             ),
         ],
     )
 
-    unused_mb = recoverable_mb([f for f in findings if f.get("category") == "unused"])
-
-    def metric_card(label: str, value, sub: str, *, tone: str = ""):
-        return html.Div(
-            className=f"idx-metric-card {tone}".strip(),
-            children=[
-                html.Div(fmt_int(value), className="idx-metric-value"),
-                html.Div(label, className="idx-metric-label"),
-                html.Div(sub, className="idx-metric-sub"),
-            ],
+    def kpi_card(kpi_id: str, title_key: str, cell: dict):
+        cell = cell or {}
+        tone = (cell.get("tone") or "").replace("is-", "") or "neutral"
+        if cell.get("display") == "dash":
+            value_child = t("indexes.kpi.dash", loc)
+        elif kpi_id == "missing" and cell.get("display_mode") == "pct":
+            value_child = f"{cell.get('peak_impact_pct'):.1f}%"
+        elif kpi_id == "missing":
+            value_child = fmt_compact(cell.get("value") or 0)
+        else:
+            value_child = fmt_int(cell.get("value") or 0)
+        sub_key = cell.get("sub_key") or "missing_sub"
+        if kpi_id == "missing" and (payload.get("kpi_supplement") == "live_dmv_peek"):
+            sub_key = "missing_peek_sub"
+        sub = t(
+            f"indexes.kpi.{sub_key}",
+            loc,
+            writes=fmt_int(cell.get("writes") or 0),
+            unused=fmt_int(cell.get("unused_with_writes") or 0),
+            wh=fmt_int(cell.get("write_heavy") or 0),
         )
-
-    metrics_grid = html.Div(
-        className="idx-metrics-grid",
-        children=[
-            metric_card(
-                "Unused Indexes",
-                totals.get("unused") or 0,
-                f"{fmt_size_mb(unused_mb)} recoverable" if unused_mb else "No reclaimable space found",
-                tone="is-warn" if (totals.get("unused") or 0) else "",
-            ),
-            metric_card(
-                "Write-Heavy",
-                totals.get("write_heavy") or 0,
-                "High write amplification",
-                tone="is-warn" if (totals.get("write_heavy") or 0) else "",
-            ),
-            metric_card(
-                "Heap Tables",
-                totals.get("heaps") or 0,
-                "No clustered index",
-                tone="is-warn" if (totals.get("heaps") or 0) else "",
-            ),
-            metric_card(
-                "Missing Index Hints",
-                totals.get("missing_suggestions") or 0,
-                "From optimizer DMV",
-            ),
-        ],
-    )
-
-    top_row = html.Div(className="idx-ov-row idx-ov-row-top", children=[health_card, metrics_grid])
-
-    total_issues = max(1, counts.get("critical", 0) + counts.get("warning", 0) + counts.get("watch", 0))
-
-    def issue_row(key: str, label: str):
-        n = counts.get(key, 0)
-        pct = max(4.0, min(100.0, (n / total_issues) * 100.0)) if n else 0.0
         return html.Div(
-            className="idx-issue-row",
+            id=f"indexes-kpi-{kpi_id}",
+            className=f"idx-kpi-card is-{kpi_id} tone-{tone}".strip(),
             children=[
-                html.Span(label, className=f"idx-issue-label is-{key}"),
+                html.Span(
+                    t("indexes.kpi.cases", loc, n=fmt_int(cell.get("badge") or 0)),
+                    className="idx-kpi-badge",
+                    dir="ltr",
+                )
+                if cell.get("badge")
+                else None,
                 html.Div(
-                    className="idx-issue-bar",
-                    children=html.Div(className=f"idx-issue-fill is-{key}", style={"width": f"{pct:.0f}%"}),
+                    className="idx-kpi-card-head",
+                    children=[
+                        html.Span(className=f"idx-kpi-icon is-{kpi_id}", **{"aria-hidden": "true"}),
+                        html.Div(t(title_key, loc), className="idx-kpi-label"),
+                    ],
                 ),
-                html.Span(fmt_int(n), className="idx-issue-count"),
+                html.Div(value_child, className="idx-kpi-value", dir="ltr"),
+                html.Div(sub, className="idx-kpi-sub"),
             ],
         )
 
-    issues_card = html.Div(
-        className="idx-panel-card",
+    # Design §2: four KPI cards as primary strip (no Consolidation)
+    kpi_row = html.Div(
+        className="idx-ov-row idx-ov-kpi-row",
         children=[
-            html.Div("Issue Breakdown", className="idx-panel-title"),
-            issue_row("critical", "Critical"),
-            issue_row("warning", "Warning"),
-            issue_row("watch", "Watch"),
+            kpi_card("missing", "indexes.kpi.missing_impact", kpis.get("missing_impact") or {}),
+            kpi_card("frag", "indexes.kpi.high_frag", kpis.get("high_frag") or {}),
+            kpi_card(
+                "unused-writes",
+                "indexes.kpi.dead_unused_writes",
+                kpis.get("dead_unused_writes") or {},
+            ),
+            kpi_card("duplicates", "indexes.kpi.duplicate_debt", kpis.get("duplicate_debt") or {}),
         ],
     )
 
@@ -255,21 +378,103 @@ def render_overview(payload: dict | None):
         )
 
     dbs_card = html.Div(
+        id="indexes-ov-per-db",
         className="idx-panel-card",
         children=[
-            html.Div("Per Database", className="idx-panel-title"),
+            html.Div(t("indexes.ov.per_db", loc), className="idx-panel-title"),
             html.Div(
-                db_items or [html.Div("No databases scanned yet.", className="idx-empty-hint")],
+                db_items or [html.Div(t("indexes.ov.no_db", loc), className="idx-empty-hint")],
                 className="idx-db-list",
             ),
         ],
     )
 
-    mid_row = html.Div(className="idx-ov-row idx-ov-row-mid", children=[issues_card, dbs_card])
+    frag_available = bool(payload.get("frag_available") or payload.get("frag_loaded"))
+    high_frag_cell = kpis.get("high_frag") or {}
+    high_frag_n = int(high_frag_cell.get("value") or 0) if frag_available and high_frag_cell.get("display") == "int" else None
+    if frag_available and high_frag_n is not None:
+        frag_body = html.Div(
+            className="idx-frag-bands",
+            children=[
+                html.Div(
+                    className="idx-frag-band is-ok",
+                    children=[
+                        html.Span(t("indexes.frag.healthy", loc), className="idx-frag-band-label"),
+                        html.Span("< 10%", className="idx-frag-band-range", dir="ltr"),
+                    ],
+                ),
+                html.Div(
+                    className="idx-frag-band is-warn",
+                    children=[
+                        html.Span(t("indexes.frag.moderate", loc), className="idx-frag-band-label"),
+                        html.Span("10–30% · REORGANIZE", className="idx-frag-band-range", dir="ltr"),
+                    ],
+                ),
+                html.Div(
+                    className="idx-frag-band is-critical",
+                    children=[
+                        html.Span(t("indexes.frag.critical", loc), className="idx-frag-band-label"),
+                        html.Span(
+                            f"> 30% · REBUILD · {fmt_int(high_frag_n)}",
+                            className="idx-frag-band-range",
+                            dir="ltr",
+                        ),
+                    ],
+                ),
+            ],
+        )
+    else:
+        frag_body = html.Div(
+            className="idx-frag-pending",
+            children=[
+                html.Span("—", className="idx-frag-pending-dash", dir="ltr"),
+                html.Span(t("indexes.frag.pending_short", loc), className="idx-frag-pending-note"),
+            ],
+        )
+
+    frag_card = html.Div(
+        id="indexes-ov-frag",
+        className="idx-panel-card",
+        children=[
+            html.Div(t("indexes.ov.frag_dist", loc), className="idx-panel-title"),
+            frag_body,
+        ],
+    )
+
+    unused_findings = [f for f in findings if f.get("category") == "unused"]
+    waste_mb = recoverable_mb(unused_findings)
+    waste_gb = (waste_mb / 1024.0) if waste_mb else 0.0
+    write_waste = kpis.get("dead_unused_writes") or {}
+    waste_card = html.Div(
+        id="indexes-ov-waste",
+        className="idx-panel-card",
+        children=[
+            html.Div(t("indexes.ov.waste_gb", loc), className="idx-panel-title"),
+            html.Div(
+                className="idx-waste-value",
+                children=fmt_compact(round(waste_gb, 2)) if waste_gb else "0",
+                dir="ltr",
+            ),
+            html.Div(
+                t(
+                    "indexes.ov.waste_sub",
+                    loc,
+                    mb=fmt_size_mb(waste_mb) if waste_mb else "0 MB",
+                    writes=fmt_int(write_waste.get("writes") or 0),
+                ),
+                className="idx-metric-sub",
+            ),
+        ],
+    )
+
+    analytics_row = html.Div(
+        className="idx-ov-row idx-ov-analytics-row",
+        children=[dbs_card, frag_card, waste_card],
+    )
 
     critical_n = counts.get("critical", 0)
     goto_triage_btn = html.Button(
-        "Go to Triage →",
+        t("indexes.cta.triage", loc),
         id="btn-indexes-goto-triage",
         className="idx-cta-btn",
         n_clicks=0,
@@ -283,15 +488,10 @@ def render_overview(payload: dict | None):
                     className="idx-cta-text-block",
                     children=[
                         html.Div(
-                            f"{fmt_int(critical_n)} critical issue{'s' if critical_n != 1 else ''} "
-                            "require immediate attention",
+                            t("indexes.cta.critical_title", loc, n=fmt_int(critical_n)),
                             className="idx-cta-title",
                         ),
-                        html.P(
-                            "These indexes are actively hurting write performance or wasting "
-                            "storage — review them before your next maintenance window.",
-                            className="idx-cta-sub",
-                        ),
+                        html.P(t("indexes.cta.critical_sub", loc), className="idx-cta-sub"),
                     ],
                 ),
                 goto_triage_btn,
@@ -304,24 +504,21 @@ def render_overview(payload: dict | None):
                 html.Div(
                     className="idx-cta-text-block",
                     children=[
-                        html.Div("No critical issues right now", className="idx-cta-title"),
-                        html.P(
-                            "Nice work — keep an eye on Warning / Watch findings in Triage.",
-                            className="idx-cta-sub",
-                        ),
+                        html.Div(t("indexes.cta.ok_title", loc), className="idx-cta-title"),
+                        html.P(t("indexes.cta.ok_sub", loc), className="idx-cta-sub"),
                     ],
                 ),
                 goto_triage_btn,
             ],
         )
 
-    return html.Div(className="idx-overview-inner", children=[top_row, mid_row, cta])
+    return html.Div(
+        className="idx-overview-inner",
+        children=[header_bar, kpi_row, analytics_row, cta],
+    )
 
 
 # ---------------------------------------------------------------------------
-# Triage — sub-bar / rail / detail
-# ---------------------------------------------------------------------------
-
 
 def render_triage_subbar(payload: dict | None, filter_key: str = "all"):
     findings = (payload or {}).get("findings") or []
@@ -403,7 +600,7 @@ def render_triage_rail(
         sev = _sev(f.get("severity"))
         fid = f.get("id") or str(i)
         score = float(f.get("impact_score") or 0)
-        icon = _CARD_ICON.get(f.get("category") or "", "•")
+        icon = _CARD_ICON.get(f.get("category") or "", "dot")
         subtitle = f.get("display_title") or f.get("index_name") or f.get("title") or ""
         selected = " is-selected" if fid == selected_id else ""
         cards.append(
@@ -418,7 +615,10 @@ def render_triage_rail(
                     ),
                     html.Div(f.get("object_path") or "", className="idx-fc-path", dir="ltr"),
                     html.Div(
-                        [html.Span(icon, className="idx-fc-icon"), html.Span(subtitle, dir="ltr")],
+                        [
+                            html.Span(className=f"idx-fc-icon is-{icon}", **{"aria-hidden": "true"}),
+                            html.Span(subtitle, dir="ltr"),
+                        ],
                         className="idx-fc-subtitle",
                     ),
                     html.Div(
@@ -511,7 +711,7 @@ def render_triage_detail(finding: dict | None):
         bullets.append(
             html.Li(
                 [
-                    html.Span(_TONE_ICON.get(tone, "•"), className=f"idx-why-ico is-{tone}"),
+                    html.Span(className=f"idx-why-ico is-{tone}", **{"aria-hidden": "true"}),
                     html.Span(b.get("text") or ""),
                 ],
                 className="idx-why-item",
@@ -528,7 +728,21 @@ def render_triage_detail(finding: dict | None):
     )
 
     scripts = []
+    blocked = finding.get("script_blocked_reason")
+    try:
+        score = int(finding.get("confidence_score")) if finding.get("confidence_score") is not None else None
+    except (TypeError, ValueError):
+        score = None
+    allow_copy = not blocked and (
+        score is None or score >= INDEX_CONFIDENCE_SCRIPT_MIN
+    )
+    if score is not None and score < INDEX_CONFIDENCE_SCRIPT_MIN:
+        allow_copy = False
     for j, s in enumerate(finding.get("scripts") or []):
+        if not allow_copy:
+            break
+        if not (s.get("tsql") or "").strip():
+            continue
         scripts.append(
             html.Div(
                 className="idx-sql-block",
@@ -539,7 +753,7 @@ def render_triage_detail(finding: dict | None):
                         className="indexes-copy-payload",
                     ),
                     html.Button(
-                        s.get("label") or "Copy",
+                        s.get("label") or t("indexes.script.copy", DEFAULT_LOCALE),
                         id={"type": "indexes-copy-btn", "index": 9000, "script": j},
                         className="idx-copy-btn",
                         n_clicks=0,
@@ -548,16 +762,50 @@ def render_triage_detail(finding: dict | None):
                 ],
             )
         )
+    conf_meta = []
+    if score is not None:
+        conf_meta.append(
+            html.Div(
+                t("indexes.script.confidence", DEFAULT_LOCALE, score=score),
+                className="idx-script-confidence",
+                dir="ltr",
+            )
+        )
+    reasons = finding.get("confidence_reasons") or (
+        [finding.get("confidence_reason")] if finding.get("confidence_reason") else []
+    )
+    reasons = [str(x) for x in reasons if x]
+    if reasons:
+        conf_meta.append(
+            html.Div(
+                t("indexes.script.reasons", DEFAULT_LOCALE, reasons="; ".join(reasons[:3])),
+                className="idx-script-reasons",
+            )
+        )
+    if blocked or (score is not None and score < INDEX_CONFIDENCE_SCRIPT_MIN):
+        sql_inner = html.P(
+            blocked
+            or t(
+                "indexes.script.blocked",
+                DEFAULT_LOCALE,
+                score=score if score is not None else 0,
+                min=INDEX_CONFIDENCE_SCRIPT_MIN,
+            ),
+            className="indexes-script-blocked",
+        )
+    elif scripts:
+        sql_inner = html.Div(scripts)
+    else:
+        sql_inner = html.P(
+            "No suggested script for this finding — investigate in Table Explorer.",
+            className="idx-empty-hint",
+        )
     sql_block = html.Div(
         className="idx-detail-section",
         children=[
             html.Div("SUGGESTED SQL", className="idx-detail-section-title"),
-            html.Div(scripts)
-            if scripts
-            else html.P(
-                "No suggested script for this finding — investigate in Table Explorer.",
-                className="idx-empty-hint",
-            ),
+            html.Div(conf_meta, className="idx-script-meta") if conf_meta else None,
+            sql_inner,
         ],
     )
 
@@ -626,7 +874,7 @@ def render_catalog_status(status: dict | None):
 
 def _explorer_status_tone(t: dict) -> str:
     """Row status dot: critical (heap / 0 indexes), warning (large), else muted ok."""
-    if t.get("is_heap"):
+    if _as_heap(t.get("is_heap")):
         return "critical"
     try:
         if t.get("index_count") is not None and int(t.get("index_count")) == 0:
@@ -641,96 +889,70 @@ def _explorer_status_tone(t: dict) -> str:
     return "ok"
 
 
+def render_explorer_pagination_info(
+    total: int, page: int, total_pages: int, start_n: int, end_n: int
+):
+    return [
+        "Showing ",
+        html.Strong(fmt_int(start_n)),
+        "–",
+        html.Strong(fmt_int(end_n)),
+        " of ",
+        html.Strong(fmt_int(total)),
+        " tables",
+    ]
+
+
 def render_explorer_table_list(
     cache: dict | None,
     selected: dict | None,
     query: str = "",
     *,
     sort_key: str = "table",
+    page: int = 1,
+    locale: str = DEFAULT_LOCALE,
 ):
+    loc = normalize_locale(locale)
     if not cache:
         return html.Div(
             className="idx-ex-empty",
-            children="Choose a database (or All) to load tables from the catalog.",
+            children=t("indexes.empty.choose_db", loc),
         )
 
     cache_db = cache.get("database") or ""
-    tables = list(cache.get("tables") or [])
-    q = (query or "").strip().lower()
-    if q:
-        tables = [
-            t
-            for t in tables
-            if q in str(t.get("full_name") or "").lower()
-            or q in str(t.get("table_name") or "").lower()
-            or q in str(t.get("database_name") or cache_db or "").lower()
-        ]
-    if not tables:
-        return html.Div(className="idx-ex-empty", children="No tables match this filter.")
+    filtered = filter_explorer_tables(cache, query, sort_key=sort_key or "table")
+    if not filtered:
+        return html.Div(className="idx-ex-empty", children=t("indexes.empty.no_tables", loc))
 
-    def sort_val(t: dict):
-        if sort_key == "schema":
-            return str(t.get("schema_name") or "").lower()
-        if sort_key == "rows":
-            try:
-                return -float(t.get("row_count") or 0)
-            except (TypeError, ValueError):
-                return 0
-        if sort_key == "heap":
-            return 0 if t.get("is_heap") else 1
-        return str(t.get("table_name") or "").lower()
-
-    visible = sorted(tables, key=sort_val)[:_EXPLORER_ROW_CAP]
+    page, total_pages, start, _start_n, _end_n = explorer_page_meta(len(filtered), page)
+    visible = filtered[start : start + INDEX_EXPLORER_PAGE_SIZE]
     sel_schema = (selected or {}).get("schema")
     sel_table = (selected or {}).get("table")
     sel_db = (selected or {}).get("database")
     cache_time = _short_time(cache.get("refreshed_at") or cache.get("cached_at"))
 
-    # Keep the selected table visible even when search was cleared / outside row cap
-    if selected and sel_table:
-        def _is_sel(t: dict) -> bool:
-            return (
-                (t.get("schema_name") or "dbo") == (sel_schema or "dbo")
-                and (t.get("table_name") or "") == sel_table
-                and (
-                    not sel_db
-                    or (t.get("database_name") or cache_db) == sel_db
-                )
-            )
-
-        if not any(_is_sel(t) for t in visible):
-            pinned = next((t for t in (cache.get("tables") or []) if _is_sel(t)), None)
-            if pinned is None:
-                pinned = {
-                    "database_name": sel_db or cache_db,
-                    "schema_name": sel_schema or "dbo",
-                    "table_name": sel_table,
-                    "full_name": f"{sel_schema or 'dbo'}.{sel_table}",
-                }
-            visible = [pinned] + visible[: max(0, _EXPLORER_ROW_CAP - 1)]
-
     head = html.Div(
         className="idx-ex-row idx-ex-row-head",
         children=[
             html.Span("", className="idx-ex-col idx-ex-status"),
-            html.Span("DATABASE", className="idx-ex-col idx-ex-db"),
-            html.Span("SCHEMA.TABLE", className="idx-ex-col idx-ex-table"),
-            html.Span("TYPE", className="idx-ex-col idx-ex-type"),
-            html.Span("ROWS", className="idx-ex-col idx-ex-num"),
-            html.Span("SIZE", className="idx-ex-col idx-ex-num"),
-            html.Span("INDEXES", className="idx-ex-col idx-ex-num"),
-            html.Span("CACHED", className="idx-ex-col idx-ex-cached"),
+            html.Span(t("indexes.col.database", loc), className="idx-ex-col idx-ex-db"),
+            html.Span(t("indexes.col.schema_table", loc), className="idx-ex-col idx-ex-table"),
+            html.Span(t("indexes.col.type", loc), className="idx-ex-col idx-ex-type"),
+            html.Span(t("indexes.col.rows", loc), className="idx-ex-col idx-ex-num"),
+            html.Span(t("indexes.col.size", loc), className="idx-ex-col idx-ex-num"),
+            html.Span(t("indexes.col.indexes", loc), className="idx-ex-col idx-ex-num"),
+            html.Span(t("indexes.col.cached", loc), className="idx-ex-col idx-ex-cached"),
         ],
     )
 
     rows = [head]
-    for i, t in enumerate(visible):
-        schema = t.get("schema_name") or "dbo"
-        table = t.get("table_name") or ""
-        db_name = t.get("database_name") or cache_db or "—"
-        is_heap = bool(t.get("is_heap"))
-        size_mb = t.get("size_mb")
-        idx_count = t.get("index_count")
+    for i, row in enumerate(visible):
+        schema = row.get("schema_name") or "dbo"
+        table = row.get("table_name") or ""
+        db_name = row.get("database_name") or cache_db or "—"
+        is_heap = _as_heap(row.get("is_heap"))
+        size_mb = row.get("size_mb")
+        idx_count = row.get("index_count")
         try:
             size_hot = size_mb is not None and float(size_mb) >= 1024
         except (TypeError, ValueError):
@@ -739,13 +961,13 @@ def render_explorer_table_list(
             idx_zero = idx_count is not None and int(idx_count) == 0
         except (TypeError, ValueError):
             idx_zero = False
-        tone = _explorer_status_tone(t)
+        tone = _explorer_status_tone(row)
         is_sel = (
             schema == sel_schema
             and table == sel_table
             and (not sel_db or sel_db == db_name)
         )
-        row_cached = _short_time(t.get("refreshed_at") or t.get("cached_at")) or cache_time or "—"
+        row_cached = _short_time(row.get("refreshed_at") or row.get("cached_at")) or cache_time or "—"
         type_child = (
             html.Span("HEAP", className="idx-type-badge is-heap")
             if is_heap
@@ -762,7 +984,7 @@ def render_explorer_table_list(
                     html.Span(f"{schema}.{table}", className="idx-ex-col idx-ex-table", dir="ltr"),
                     html.Span(type_child, className="idx-ex-col idx-ex-type"),
                     html.Span(
-                        fmt_compact(t.get("row_count")) if t.get("row_count") is not None else "—",
+                        fmt_compact(row.get("row_count")) if row.get("row_count") is not None else "—",
                         className="idx-ex-col idx-ex-num",
                         dir="ltr",
                     ),
@@ -785,4 +1007,8 @@ def render_explorer_table_list(
             )
         )
 
-    return html.Div(rows, className="idx-ex-list", **{"data-visible-count": str(len(visible))})
+    return html.Div(
+        rows,
+        className="idx-ex-list",
+        **{"data-visible-count": str(len(visible)), "data-total": str(len(filtered)), "data-page": str(page)},
+    )

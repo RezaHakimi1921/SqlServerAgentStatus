@@ -92,6 +92,7 @@ def load_config():
         "trust_cert": os.getenv("SQL_TRUST_CERT", "yes").strip(),
         "refresh_minutes": refresh_minutes,
         "monitor_database": os.getenv("MONITOR_DATABASE", "SmartMonitorDB").strip() or "SmartMonitorDB",
+        "locale": (os.getenv("UI_LOCALE", "en").strip().lower() or "en"),
     }
 
 
@@ -274,6 +275,30 @@ def save_refresh_minutes(minutes: int) -> None:
     if ENV_PATH.exists():
         _harden_env_file()
     load_dotenv(ENV_PATH, override=True)
+
+
+def save_locale(locale: str) -> str:
+    """Persist UI_LOCALE (en|fa) in .env. Returns normalized locale."""
+    from core.i18n import normalize_locale
+
+    loc = normalize_locale(locale)
+    lines = []
+    found = False
+    if ENV_PATH.exists():
+        for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("UI_LOCALE="):
+                lines.append(f"UI_LOCALE={loc}")
+                found = True
+            else:
+                lines.append(line)
+    if not found:
+        lines.append(f"UI_LOCALE={loc}")
+    ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if ENV_PATH.exists():
+        _harden_env_file()
+    load_dotenv(ENV_PATH, override=True)
+    return loc
 
 
 def test_connection(server, user, password, database="msdb", driver="17", timeout=10):

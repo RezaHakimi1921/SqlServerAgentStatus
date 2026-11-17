@@ -119,8 +119,9 @@ def analyze_relationships(indexes: list[dict]) -> list[dict]:
                                 f"{a.get('index_name')}."
                             ),
                             "recommendation": (
-                                f"Review consolidating by removing {b.get('index_name')} "
-                                f"if {a.get('index_name')} covers the workload."
+                                f"Review overlapping leading keys — decide manually whether "
+                                f"{b.get('index_name')} is redundant given {a.get('index_name')}. "
+                                f"No consolidated Super Index script in v1."
                             ),
                         }
                     )
@@ -144,7 +145,8 @@ def analyze_relationships(indexes: list[dict]) -> list[dict]:
                         ),
                         "recommendation": (
                             f"Validate whether {b.get('index_name')} is still needed; "
-                            f"if workload allows, keep {a.get('index_name')} only."
+                            f"if workload allows, keep {a.get('index_name')} only. "
+                            f"No consolidated Super Index script in v1."
                         ),
                         "risk": risk,
                     }
@@ -359,7 +361,10 @@ def build_recommendations(
                     "problem": f"{name} is write-heavy relative to reads.",
                     "why": "Maintenance cost dominates; the index may still help some queries but amplifies writes.",
                     "evidence": {"reads": reads, "writes": writes, "size_mb": size_mb},
-                    "suggested_action": "Review whether keys/includes still match critical queries; consider consolidation.",
+                    "suggested_action": (
+                        "Review whether keys/includes still match critical queries; "
+                        "drop only after workload validation (no auto-merge in v1)."
+                    ),
                     "risk": "Medium — dropping may regress specific seeks.",
                     "scripts": [
                         {

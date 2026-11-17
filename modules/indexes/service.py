@@ -5,6 +5,7 @@ from modules.indexes.constants import (
     INDEX_CAP_MISSING,
     INDEX_CAP_UNUSED,
     INDEX_CAP_WRITE_HEAVY,
+    INDEX_CONFIDENCE_SCRIPT_MIN,
     INDEX_HIGH_FRAG_MIN_PAGES,
     INDEX_HIGH_FRAG_PCT,
     INDEX_USAGE_MIN_UPTIME_DAYS,
@@ -50,60 +51,83 @@ def assign_confidence(
     *,
     uptime_days: float,
     writes: int = 0,
-) -> tuple[ConfidenceLevel, str]:
-    """Return evidence-trust confidence and a short reason for the finding."""
+) -> tuple[ConfidenceLevel, str, int]:
+    """Return (level, reason, score 0-100). Copyable T-SQL only when score >= 70."""
     uptime_days = float(uptime_days or 0)
     writes = int(writes or 0)
     short_uptime = uptime_days < INDEX_USAGE_MIN_UPTIME_DAYS
+    days_label = int(uptime_days) if uptime_days == int(uptime_days) else uptime_days
+
+    def _level(s: int) -> ConfidenceLevel:
+        if s < 40:
+            return "low"
+        if s < 70:
+            return "medium"
+        return "high"
 
     if category in ("duplicate", "heap"):
         return (
             "high",
             "Catalog metadata; not affected by DMV reset since restart.",
+            90,
         )
+
+    score = 100
+    if short_uptime:
+        score -= 40
 
     if category == "missing":
-        if short_uptime:
-            days_label = int(uptime_days) if uptime_days == int(uptime_days) else uptime_days
-            return (
-                "low",
-                f"Missing-index DMVs plus only {days_label} day(s) since restart — short collection window.",
-            )
-        return (
-            "medium",
-            "Missing-index DMVs are optimizer hints; compare with existing indexes before acting.",
+        # Optimizer hints never reach script threshold in v1
+        score = 35 if short_uptime else 55
+        reason = (
+            f"Missing-index DMVs plus only {days_label} day(s) since restart — short collection window."
+            if short_uptime
+            else "Missing-index DMVs are optimizer hints; compare with existing indexes before acting."
         )
+        return (_level(score), reason, score)
 
     if category == "unused":
+        if writes < INDEX_WRITE_HEAVY_MIN_WRITES:
+            score -= 35
         if short_uptime:
-            days_label = int(uptime_days) if uptime_days == int(uptime_days) else uptime_days
-            return (
-                "low",
-                f"Usage stats reset at restart; only {days_label} day(s) of collection so far.",
+            reason = f"Usage stats reset at restart; only {days_label} day(s) of collection so far."
+        elif writes >= INDEX_WRITE_HEAVY_MIN_WRITES:
+            reason = (
+                f"Zero reads with {writes:,} writes over {int(uptime_days)}+ days "
+                "— strong usage signal."
             )
-        if writes >= INDEX_WRITE_HEAVY_MIN_WRITES:
-            return (
-                "high",
-                f"Zero reads with {writes:,} writes over {int(uptime_days)}+ days — strong usage signal.",
+        else:
+            reason = (
+                f"Zero reads over {int(uptime_days)}+ days; write activity is low "
+                "— confirm workload cycle."
             )
-        return (
-            "medium",
-            f"Zero reads over {int(uptime_days)}+ days; write activity is low — confirm workload cycle.",
-        )
+        return (_level(score), reason, max(0, min(100, score)))
 
     if category == "write_heavy":
-        if short_uptime:
-            days_label = int(uptime_days) if uptime_days == int(uptime_days) else uptime_days
-            return (
-                "low",
-                f"Usage stats reset at restart; only {days_label} day(s) of collection so far.",
-            )
-        return (
-            "high",
-            f"Write-heavy pattern observed over {int(uptime_days)}+ days since restart.",
+        reason = (
+            f"Usage stats reset at restart; only {days_label} day(s) of collection so far."
+            if short_uptime
+            else f"Write-heavy pattern observed over {int(uptime_days)}+ days since restart."
         )
+        return (_level(score), reason, max(0, min(100, score)))
 
-    return ("medium", "Limited evidence context for this category.")
+    return ("medium", "Limited evidence context for this category.", 55)
+
+
+def _gated_scripts(score: int | float, scripts: list[dict]) -> tuple[list[dict], str | None]:
+    """Attach copyable T-SQL only when confidence_score >= INDEX_CONFIDENCE_SCRIPT_MIN."""
+    try:
+        s = int(score)
+    except (TypeError, ValueError):
+        s = 0
+    if s >= int(INDEX_CONFIDENCE_SCRIPT_MIN):
+        return scripts, None
+    if not scripts:
+        return [], None
+    return [], (
+        f"Confidence {s} < {INDEX_CONFIDENCE_SCRIPT_MIN} — "
+        "need more history/uptime before copying T-SQL."
+    )
 
 
 def _normalize_includes(include_cols: str | None) -> str:
@@ -160,6 +184,8 @@ def build_disable_drop_script(
     index_name: str,
     *,
     database: str | None = None,
+    confidence_score: int | None = None,
+    reasons: list[str] | None = None,
 ) -> str:
     """Copy-only DISABLE + DROP script for DBA review (never executed by the app)."""
     qualified = f"{quotename(schema)}.{quotename(table)}"
@@ -167,11 +193,23 @@ def build_disable_drop_script(
     use = ""
     if database:
         use = f"USE {quotename(database)};\nGO\n"
+    target = f"{quotename(database) + '.' if database else ''}{qualified}"
+    conf_line = ""
+    if confidence_score is not None:
+        reason_txt = ", ".join(str(r) for r in (reasons or [])[:5]) or "—"
+        conf_line = f"-- Confidence: {int(confidence_score)}/100   |  Reasons: {reason_txt}\n"
     return (
         use
-        + "-- REVIEW ONLY — not executed by SqlMonitor\n"
+        + "-- =========================================================================\n"
+        + f"-- REVIEW ONLY — Target: {target}.{idx}\n"
+        + conf_line
+        + "-- SqlMonitor never executes this. Confirm uptime / AG role / business cycle\n"
+        + "-- before DISABLE or DROP. Prefer DISABLE first when unsure.\n"
+        + "-- =========================================================================\n"
         f"ALTER INDEX {idx} ON {qualified} DISABLE;\n"
-        f"DROP INDEX {idx} ON {qualified};\n"
+        f"-- DROP INDEX {idx} ON {qualified};\n"
+        f"-- Uncomment DROP only after DISABLE validation.\n"
+        "GO\n"
     )
 
 
@@ -184,6 +222,8 @@ def build_create_missing_script(
     include_cols: str | None = None,
     filter_def: str | None = None,
     database: str | None = None,
+    confidence_score: int | None = None,
+    reasons: list[str] | None = None,
 ) -> str:
     """Suggested CREATE script for a missing-index hint (review only)."""
     qualified = f"{quotename(schema)}.{quotename(table)}"
@@ -197,11 +237,67 @@ def build_create_missing_script(
     use = ""
     if database:
         use = f"USE {quotename(database)};\nGO\n"
+    target = f"{quotename(database) + '.' if database else ''}{qualified}"
+    conf_line = ""
+    if confidence_score is not None:
+        reason_txt = ", ".join(str(r) for r in (reasons or [])[:5]) or "—"
+        conf_line = f"-- Confidence: {int(confidence_score)}/100   |  Reasons: {reason_txt}\n"
     return (
         use
+        + "-- =========================================================================\n"
+        + f"-- Optimization suggestion — Target: {target}\n"
+        + conf_line
         + "-- REVIEW ONLY — not executed by SqlMonitor\n"
+        + "-- =========================================================================\n"
         f"CREATE NONCLUSTERED INDEX {idx}\n"
-        f"ON {qualified} ({key_cols}){include_clause}{filter_clause};\n"
+        f"ON {qualified} ({key_cols}){include_clause}{filter_clause}\n"
+        "WITH (\n"
+        "    ONLINE = ON,           -- when edition supports\n"
+        "    FILLFACTOR = 85\n"
+        "    -- DATA_COMPRESSION / SORT_IN_TEMPDB / MAXDOP: set per workload\n"
+        ");\n"
+        "GO\n"
+    )
+
+
+def build_frag_maintenance_script(
+    schema: str,
+    table: str,
+    index_name: str,
+    frag_pct: float,
+    *,
+    database: str | None = None,
+) -> str:
+    """Copy-only REORGANIZE / REBUILD suggestion from frag bands (never executed)."""
+    qualified = f"{quotename(schema)}.{quotename(table)}"
+    idx = quotename(index_name)
+    use = ""
+    if database:
+        use = f"USE {quotename(database)};\nGO\n"
+    target = f"{quotename(database) + '.' if database else ''}{qualified}"
+    try:
+        pct = float(frag_pct)
+    except (TypeError, ValueError):
+        pct = 0.0
+    if pct >= INDEX_HIGH_FRAG_PCT:
+        action = "REBUILD"
+        hint = "Critical band (>30%) — schedule offline/online rebuild per edition."
+    elif pct >= 10.0:
+        action = "REORGANIZE"
+        hint = "Moderate band (10–30%) — online reorganize is usually enough."
+    else:
+        action = "REORGANIZE"
+        hint = "Healthy band (<10%) — maintenance optional."
+    return (
+        use
+        + "-- =========================================================================\n"
+        + f"-- REVIEW ONLY — Target: {target}.{idx}\n"
+        + f"-- Fragmentation: {pct:.1f}% · Suggested: {action}\n"
+        + f"-- {hint}\n"
+        + "-- SqlMonitor never executes this.\n"
+        + "-- =========================================================================\n"
+        f"ALTER INDEX {idx} ON {qualified} {action};\n"
+        "GO\n"
     )
 
 
@@ -314,13 +410,27 @@ def _build_unused_write_heavy_findings(
         schema = row.get("schema_name", "")
         table = row.get("table_name", "")
         index_name = row.get("index_name", "")
-        confidence, reason = assign_confidence("unused", uptime_days=uptime_days, writes=writes)
-        unused_findings.append(
-            {
+        confidence, reason, score = assign_confidence(
+            "unused", uptime_days=uptime_days, writes=writes
+        )
+        scripts, blocked = _gated_scripts(
+            score,
+            [
+                {
+                    "label": "Copy DISABLE/DROP script for DBA review",
+                    "tsql": build_disable_drop_script(
+                        schema, table, index_name, confidence_score=score, reasons=[reason]
+                    ),
+                }
+            ],
+        )
+        finding = {
                 "category": "unused",
                 "severity": _usage_severity(writes),
                 "confidence": confidence,
+                "confidence_score": score,
                 "confidence_reason": reason,
+                "confidence_reasons": [reason],
                 "database_name": database_name,
                 "schema_name": schema,
                 "table_name": table,
@@ -338,16 +448,13 @@ def _build_unused_write_heavy_findings(
                     "No reads since last SQL Server start; still paying write/maintenance "
                     f"cost — review before drop; confirm a full business cycle. {_DISABLE_NOTE}"
                 ),
-                "scripts": [
-                    {
-                        "label": "Copy DISABLE/DROP script for DBA review",
-                        "tsql": build_disable_drop_script(schema, table, index_name),
-                    }
-                ],
+                "scripts": scripts,
                 "table_indexes": [],
                 "duplicate_group_id": None,
             }
-        )
+        if blocked:
+            finding["script_blocked_reason"] = blocked
+        unused_findings.append(finding)
 
     write_heavy_findings = []
     for row in write_heavy_rows[:INDEX_CAP_WRITE_HEAVY]:
@@ -356,13 +463,27 @@ def _build_unused_write_heavy_findings(
         schema = row.get("schema_name", "")
         table = row.get("table_name", "")
         index_name = row.get("index_name", "")
-        confidence, reason = assign_confidence("write_heavy", uptime_days=uptime_days, writes=writes)
-        write_heavy_findings.append(
-            {
+        confidence, reason, score = assign_confidence(
+            "write_heavy", uptime_days=uptime_days, writes=writes
+        )
+        scripts, blocked = _gated_scripts(
+            score,
+            [
+                {
+                    "label": "Copy DISABLE/DROP script for DBA review",
+                    "tsql": build_disable_drop_script(
+                        schema, table, index_name, confidence_score=score, reasons=[reason]
+                    ),
+                }
+            ],
+        )
+        finding = {
                 "category": "write_heavy",
                 "severity": _usage_severity(writes),
                 "confidence": confidence,
+                "confidence_score": score,
                 "confidence_reason": reason,
+                "confidence_reasons": [reason],
                 "database_name": database_name,
                 "schema_name": schema,
                 "table_name": table,
@@ -380,16 +501,13 @@ def _build_unused_write_heavy_findings(
                     "Used for reads but write cost dominates — check whether keys/filter "
                     f"still match workload. {_DISABLE_NOTE}"
                 ),
-                "scripts": [
-                    {
-                        "label": "Copy DISABLE/DROP script for DBA review",
-                        "tsql": build_disable_drop_script(schema, table, index_name),
-                    }
-                ],
+                "scripts": scripts,
                 "table_indexes": [],
                 "duplicate_group_id": None,
             }
-        )
+        if blocked:
+            finding["script_blocked_reason"] = blocked
+        write_heavy_findings.append(finding)
 
     return unused_findings, write_heavy_findings, unused_rows, write_heavy_rows
 
@@ -404,10 +522,10 @@ def _build_duplicate_findings(
     findings = []
     all_excess: list[dict] = []
     for group in groups:
-        confidence, reason = assign_confidence("duplicate", uptime_days=uptime_days)
+        confidence, reason, score = assign_confidence("duplicate", uptime_days=uptime_days)
         excess = group["excess"]
         all_excess.extend(excess)
-        scripts = [
+        raw_scripts = [
             {
                 "label": f"Copy DISABLE/DROP script for {member.get('index_name')}",
                 "tsql": build_disable_drop_script(
@@ -416,12 +534,14 @@ def _build_duplicate_findings(
             }
             for member in excess
         ]
-        findings.append(
-            {
+        scripts, blocked = _gated_scripts(score, raw_scripts)
+        finding = {
                 "category": "duplicate",
                 "severity": "warn",
                 "confidence": confidence,
+                "confidence_score": score,
                 "confidence_reason": reason,
+                "confidence_reasons": [reason],
                 "database_name": database_name,
                 "schema_name": group["schema"],
                 "table_name": group["table"],
@@ -446,7 +566,9 @@ def _build_duplicate_findings(
                 ],
                 "duplicate_group_id": group["group_id"],
             }
-        )
+        if blocked:
+            finding["script_blocked_reason"] = blocked
+        findings.append(finding)
     return findings, all_excess
 
 
@@ -458,7 +580,7 @@ def _build_heap_findings(
 ) -> list[dict]:
     findings = []
     for row in heap_rows:
-        confidence, reason = assign_confidence("heap", uptime_days=uptime_days)
+        confidence, reason, score = assign_confidence("heap", uptime_days=uptime_days)
         schema = row.get("schema_name", "")
         table = row.get("table_name", "")
         findings.append(
@@ -466,7 +588,9 @@ def _build_heap_findings(
                 "category": "heap",
                 "severity": "warn",
                 "confidence": confidence,
+                "confidence_score": score,
                 "confidence_reason": reason,
+                "confidence_reasons": [reason],
                 "database_name": database_name,
                 "schema_name": schema,
                 "table_name": table,
@@ -522,7 +646,7 @@ def _build_missing_findings(
         row for row in inventory_rows if row.get("object_id") in capped_object_ids
     ]
 
-    confidence, reason = assign_confidence("missing", uptime_days=uptime_days)
+    confidence, reason, score = assign_confidence("missing", uptime_days=uptime_days)
 
     findings = []
     for i, row in enumerate(capped, start=1):
@@ -532,12 +656,30 @@ def _build_missing_findings(
         key_cols = _missing_key_cols(row)
         include_cols = row.get("included_columns")
         suggested_name = f"IX_{table}_Missing_{i}"
-        findings.append(
-            {
+        scripts, blocked = _gated_scripts(
+            score,
+            [
+                {
+                    "label": "Copy suggested CREATE script for review",
+                    "tsql": build_create_missing_script(
+                        schema,
+                        table,
+                        suggested_name,
+                        key_cols,
+                        include_cols=include_cols,
+                        confidence_score=score,
+                        reasons=[reason],
+                    ),
+                }
+            ],
+        )
+        finding = {
                 "category": "missing",
                 "severity": "info",
                 "confidence": confidence,
+                "confidence_score": score,
                 "confidence_reason": reason,
+                "confidence_reasons": [reason],
                 "database_name": database_name,
                 "schema_name": schema,
                 "table_name": table,
@@ -555,22 +697,13 @@ def _build_missing_findings(
                     "Optimizer suggestion, not a recommendation — compare with existing "
                     "indexes before creating anything."
                 ),
-                "scripts": [
-                    {
-                        "label": "Copy suggested CREATE script for review",
-                        "tsql": build_create_missing_script(
-                            schema,
-                            table,
-                            suggested_name,
-                            key_cols,
-                            include_cols=include_cols,
-                        ),
-                    }
-                ],
+                "scripts": scripts,
                 "table_indexes": _table_indexes_for(object_id, scoped_inventory),
                 "duplicate_group_id": None,
             }
-        )
+        if blocked:
+            finding["script_blocked_reason"] = blocked
+        findings.append(finding)
     return findings, missing_total
 
 
@@ -776,6 +909,24 @@ def build_table_index_tags(raw: dict) -> dict:
                     "tsql": build_disable_drop_script(schema_name, table_name, name),
                 }
             )
+        frag_pct = row.get("avg_fragmentation_in_percent")
+        try:
+            frag_for_script = float(frag_pct) if frag_pct is not None else None
+        except (TypeError, ValueError):
+            frag_for_script = None
+        if frag_for_script is not None and frag_for_script >= 10.0:
+            scripts.append(
+                {
+                    "label": "Copy frag maintenance script for review",
+                    "tsql": build_frag_maintenance_script(
+                        schema_name,
+                        table_name,
+                        name,
+                        frag_for_script,
+                        database=database_name or None,
+                    ),
+                }
+            )
 
         usage_note = None
         if uptime.get("insufficient") and ("Unused" in tags or "Write-heavy" in tags):
@@ -826,6 +977,7 @@ def build_table_index_tags(raw: dict) -> dict:
                 "equality_columns": eq,
                 "inequality_columns": ineq,
                 "included_columns": m.get("included_columns"),
+                "tags": ["Missing"],
                 "scripts": [
                     {
                         "label": "Copy suggested CREATE for review",
@@ -932,6 +1084,9 @@ def build_table_intelligence(raw: dict) -> dict:
 def apply_frag_to_payload(payload: dict, frag_rows: list[dict]) -> dict:
     """Merge lazy frag results into inventory/tags/recommendations."""
     by_id = {int(r.get("index_id") or -1): r for r in frag_rows or []}
+    schema_name = str(payload.get("schema_name") or "")
+    table_name = str(payload.get("table_name") or "")
+    database_name = str(payload.get("database_name") or "") or None
 
     def _merge(row: dict) -> None:
         iid = int(row.get("index_id") or -1)
@@ -959,6 +1114,25 @@ def apply_frag_to_payload(payload: dict, frag_rows: list[dict]) -> dict:
                 tags.remove("OK")
             tags.append("High frag")
             row["tags"] = tags
+        if frag_f is not None and frag_f >= 10.0 and schema_name and table_name:
+            name = str(row.get("index_name") or "")
+            if name:
+                scripts = list(row.get("scripts") or [])
+                already = any("REBUILD" in (s.get("tsql") or "") or "REORGANIZE" in (s.get("tsql") or "") for s in scripts)
+                if not already:
+                    scripts.append(
+                        {
+                            "label": "Copy frag maintenance script for review",
+                            "tsql": build_frag_maintenance_script(
+                                schema_name,
+                                table_name,
+                                name,
+                                frag_f,
+                                database=database_name,
+                            ),
+                        }
+                    )
+                    row["scripts"] = scripts
 
     for row in payload.get("inventory") or []:
         _merge(row)
@@ -968,12 +1142,110 @@ def apply_frag_to_payload(payload: dict, frag_rows: list[dict]) -> dict:
     return payload
 
 
+def compute_overview_kpis(raw: dict) -> dict:
+    """Pure Overview KPI cells for v1 strip (no Consolidation).
+
+    Returns keys: missing_impact, high_frag, dead_unused_writes, duplicate_debt.
+    Each cell has value, display ("int"|"dash"), sub_key, tone; unused also has writes.
+    """
+    totals = raw.get("totals") or {}
+    sections = raw.get("sections") or {}
+    unused = raw.get("unused") or sections.get("unused") or []
+    write_heavy = raw.get("write_heavy") or sections.get("write_heavy") or []
+    missing = raw.get("missing_by_table") or sections.get("missing_by_table") or []
+    duplicates = raw.get("duplicates") or sections.get("duplicates") or []
+
+    impact = 0.0
+    peak_impact_pct = 0.0
+    for row in missing:
+        impact += float(_missing_impact_score(row) or 0)
+        try:
+            peak_impact_pct = max(peak_impact_pct, float(row.get("avg_user_impact") or 0))
+        except (TypeError, ValueError):
+            pass
+    if missing:
+        missing_value = int(round(impact))
+    else:
+        missing_value = int(totals.get("missing_suggestions") or 0)
+
+    missing_cell = {
+        "value": missing_value,
+        "display": "int",
+        "sub_key": "missing_sub",
+        "tone": "is-warn" if missing_value or peak_impact_pct else "",
+    }
+    if peak_impact_pct > 0:
+        missing_cell["peak_impact_pct"] = round(peak_impact_pct, 1)
+        missing_cell["display_mode"] = "pct"
+
+    frag_available = bool(raw.get("frag_available") or raw.get("frag_loaded"))
+    if frag_available:
+        high_frag_cell = {
+            "value": int(totals.get("high_frag") or 0),
+            "display": "int",
+            "sub_key": "frag_sub",
+            "tone": "is-warn" if int(totals.get("high_frag") or 0) else "",
+        }
+    else:
+        high_frag_cell = {
+            "value": None,
+            "display": "dash",
+            "sub_key": "frag_pending",
+            "tone": "",
+        }
+
+    dead_rows = [r for r in unused if int(r.get("writes") or 0) > 0]
+    dead_from_rows = len(dead_rows)
+    dead_writes = sum(int(r.get("writes") or 0) for r in dead_rows)
+    if "unused_with_writes" in totals:
+        dead_n = int(totals.get("unused_with_writes") or 0)
+        if "unused_write_ops" in totals:
+            dead_writes = int(totals.get("unused_write_ops") or 0)
+    else:
+        dead_n = dead_from_rows
+
+    wh_n = int(totals.get("write_heavy") or 0)
+    if wh_n <= 0 and write_heavy:
+        wh_n = len(write_heavy)
+    wh_writes = sum(int(r.get("writes") or 0) for r in write_heavy)
+
+    # Card aligns with triage write-tax findings: unused·wasted + write-heavy
+    write_waste_n = dead_n + wh_n
+    write_waste_ops = dead_writes + wh_writes
+
+    dup_n = len(duplicates) if duplicates else 0
+    if dup_n == 0:
+        dup_n = int(totals.get("duplicates") or totals.get("duplicate_tables") or 0)
+
+    return {
+        "missing_impact": missing_cell,
+        "high_frag": high_frag_cell,
+        "dead_unused_writes": {
+            "value": write_waste_n,
+            "writes": write_waste_ops,
+            "unused_with_writes": dead_n,
+            "write_heavy": wh_n,
+            "display": "int",
+            "sub_key": "write_waste_sub",
+            "tone": "is-warn" if write_waste_n else "",
+        },
+        "duplicate_debt": {
+            "value": dup_n,
+            "display": "int",
+            "sub_key": "duplicate_sub",
+            "tone": "is-warn" if dup_n else "",
+        },
+    }
+
+
 def build_overview_payload(raw: dict) -> dict:
     """Shape environment overview for Health + Triage tabs."""
     from modules.indexes.triage import build_triage_findings
 
     uptime = _compute_uptime(raw.get("sqlserver_start_time"))
     totals = raw.get("totals") or {}
+    # Preserve None for high_frag when absent so KPI can show dash (not fake zero).
+    high_frag_raw = totals["high_frag"] if "high_frag" in totals else None
     payload = {
         "uptime": uptime,
         "databases_available": raw.get("databases_available") or 0,
@@ -981,23 +1253,50 @@ def build_overview_payload(raw: dict) -> dict:
         "databases_scanned_list": raw.get("databases_scanned_list") or [],
         "scan_mode": raw.get("scan_mode") or "quick",
         "source": raw.get("source") or "live",
+        "advisor_meta": raw.get("advisor_meta") or {},
         "catalog": raw.get("catalog"),
+        "frag_loaded": bool(raw.get("frag_loaded")),
+        "frag_available": bool(raw.get("frag_available") or raw.get("frag_loaded")),
         "totals": {
             "indexes": totals.get("indexes") or 0,
             "need_review": totals.get("need_review") or 0,
             "unused": totals.get("unused") or 0,
+            "unused_with_writes": int(totals.get("unused_with_writes") or 0),
+            "unused_write_ops": int(totals.get("unused_write_ops") or 0),
             "write_heavy": totals.get("write_heavy") or 0,
             "heaps": totals.get("heaps") or 0,
+            "high_frag": 0 if high_frag_raw is None else int(high_frag_raw or 0),
             "missing_suggestions": totals.get("missing_suggestions") or 0,
+            "duplicates": int(totals.get("duplicates") or totals.get("duplicate_tables") or 0),
         },
         "sections": {
             "write_heavy": raw.get("write_heavy") or [],
             "unused": raw.get("unused") or [],
             "heaps": raw.get("heaps") or [],
             "missing_by_table": raw.get("missing_by_table") or [],
+            "duplicates": raw.get("duplicates") or [],
         },
         "errors": raw.get("errors") or {},
         "permissions_hint": raw.get("permissions_hint"),
+        "kpi_supplement": raw.get("kpi_supplement"),
     }
     payload["findings"] = build_triage_findings(payload)
+    payload["kpis"] = compute_overview_kpis(
+        {
+            **raw,
+            "unused": payload["sections"]["unused"],
+            "write_heavy": payload["sections"]["write_heavy"],
+            "missing_by_table": payload["sections"]["missing_by_table"],
+            "duplicates": payload["sections"]["duplicates"],
+            "frag_available": payload["frag_available"],
+            "frag_loaded": payload["frag_loaded"],
+            "totals": {
+                **payload["totals"],
+                # Keep availability separate from coerced display total
+                "high_frag": high_frag_raw,
+                "duplicates": payload["totals"]["duplicates"],
+            },
+            "source": payload.get("source"),
+        }
+    )
     return payload

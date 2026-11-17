@@ -6,7 +6,13 @@ from collections import defaultdict
 from dash import dcc, html
 
 from core.formatters import fmt_int
-from modules.indexes.constants import INDEX_TABLE_SEARCH_MIN_CHARS
+from core.i18n import DEFAULT_LOCALE, normalize_locale, t
+from modules.indexes.constants import INDEX_CONFIDENCE_SCRIPT_MIN, INDEX_TABLE_SEARCH_MIN_CHARS
+from modules.indexes.explore_panels import (
+    _render_audit_table,
+    _render_missing_section,
+    render_explore_header,
+)
 from modules.indexes.panels import (
     render_catalog_status,
     render_explorer_table_list,
@@ -28,6 +34,7 @@ TAG_CSS = {
     "Unique": "idx-tag is-struct",
     "Disabled": "idx-tag is-disabled",
     "Heap": "idx-tag is-heap",
+    "Missing": "idx-tag is-missing",
 }
 
 # Index type_desc → CSS modifier (HEAP / CLUSTERED / NONCLUSTERED / …)
@@ -57,7 +64,7 @@ REC_CAT_CSS = {
 
 REC_CAT_LABEL = {
     "REMOVE_CANDIDATE": "Remove candidates",
-    "CONSOLIDATE": "Consolidate / overlap",
+    "CONSOLIDATE": "Overlap signal",
     "IMPROVE_EXISTING": "Extend existing index",
     "INVESTIGATE": "Investigate",
 }
@@ -74,7 +81,8 @@ def _tab_cls(active: bool) -> str:
     return "indexes-ii-tab active" if active else "indexes-ii-tab"
 
 
-def build_indexes_layout() -> html.Div:
+def build_indexes_layout(locale: str = DEFAULT_LOCALE) -> html.Div:
+    loc = normalize_locale(locale)
     return html.Div(
         className="indexes-shell",
         dir="ltr",
@@ -90,13 +98,14 @@ def build_indexes_layout() -> html.Div:
                                 html.Span(" / ", className="indexes-ii-brand-muted"),
                                 html.Span("Object Intelligence", className="indexes-ii-brand-name"),
                             ]),
+                            html.Span("UI v2", className="indexes-ui-build", title="Explore + Overview redesign"),
                         ]),
                     ]),
                     html.Div(
                         className="indexes-main-tabs",
                         children=[
                             html.Button(
-                                "Overview",
+                                t("indexes.tab.overview", loc),
                                 id="indexes-tab-overview",
                                 className=_tab_cls(True),
                                 n_clicks=0,
@@ -104,7 +113,7 @@ def build_indexes_layout() -> html.Div:
                                 title="Environment health summary",
                             ),
                             html.Button(
-                                triage_badge_children(0),
+                                triage_badge_children(0, loc),
                                 id="indexes-tab-triage",
                                 className=_tab_cls(False),
                                 n_clicks=0,
@@ -112,7 +121,7 @@ def build_indexes_layout() -> html.Div:
                                 title="Ranked findings to review",
                             ),
                             html.Button(
-                                "Table Explorer",
+                                t("indexes.tab.explorer", loc),
                                 id="indexes-tab-explorer",
                                 className=_tab_cls(False),
                                 n_clicks=0,
@@ -130,7 +139,7 @@ def build_indexes_layout() -> html.Div:
                                 children=render_catalog_status(None),
                             ),
                             html.Button(
-                                "Refresh",
+                                t("header.refresh", loc),
                                 id="btn-indexes-refresh",
                                 className="indexes-ii-ghost-btn",
                                 n_clicks=0,
@@ -138,7 +147,7 @@ def build_indexes_layout() -> html.Div:
                                 title="Refresh current view",
                             ),
                             html.Button(
-                                "Update catalog",
+                                t("indexes.btn.update_catalog", loc),
                                 id="btn-indexes-catalog-refresh",
                                 className="indexes-ii-outline-btn",
                                 n_clicks=0,
@@ -157,7 +166,7 @@ def build_indexes_layout() -> html.Div:
                         html.Div(className="activity-loading-spinner"),
                         html.Div(
                             id="indexes-loading-text",
-                            children="Loading Object Intelligence…",
+                            children=t("indexes.loading", loc),
                             className="activity-loading-text",
                         ),
                     ]),
@@ -201,7 +210,7 @@ def build_indexes_layout() -> html.Div:
                                 html.Div(className="activity-loading-spinner"),
                                 html.Div(
                                     id="indexes-overview-loading-text",
-                                    children="Loading Object Intelligence…",
+                                    children=t("indexes.loading", loc),
                                     className="activity-loading-text",
                                 ),
                             ]),
@@ -307,7 +316,7 @@ def build_indexes_layout() -> html.Div:
                                 dcc.Input(
                                     id="indexes-table-search",
                                     type="text",
-                                    placeholder="Search table…",
+                                    placeholder=t("indexes.placeholder.search", loc),
                                     debounce=False,
                                     className="indexes-search-input idx-ex-search-input",
                                     autoComplete="off",
@@ -326,10 +335,10 @@ def build_indexes_layout() -> html.Div:
                             html.Div(
                                 className="indexes-ii-pills idx-ex-sort-pills",
                                 children=[
-                                    html.Button("Schema", id="indexes-sort-schema", n_clicks=0, type="button", className="indexes-ii-pill"),
-                                    html.Button("Table", id="indexes-sort-table", n_clicks=0, type="button", className="indexes-ii-pill active"),
-                                    html.Button("Heap", id="indexes-sort-heap", n_clicks=0, type="button", className="indexes-ii-pill"),
-                                    html.Button("Rows", id="indexes-sort-rows", n_clicks=0, type="button", className="indexes-ii-pill"),
+                                    html.Button(t("indexes.sort.schema", loc), id="indexes-sort-schema", n_clicks=0, type="button", className="indexes-ii-pill"),
+                                    html.Button(t("indexes.sort.table", loc), id="indexes-sort-table", n_clicks=0, type="button", className="indexes-ii-pill active"),
+                                    html.Button(t("indexes.sort.heap", loc), id="indexes-sort-heap", n_clicks=0, type="button", className="indexes-ii-pill"),
+                                    html.Button(t("indexes.sort.rows", loc), id="indexes-sort-rows", n_clicks=0, type="button", className="indexes-ii-pill"),
                                 ],
                             ),
                         ],
@@ -349,12 +358,12 @@ def build_indexes_layout() -> html.Div:
                                 children=render_selected_table(None),
                             ),
                             html.Button(
-                                "Load fragmentation",
+                                t("indexes.btn.load_frag", loc),
                                 id="btn-indexes-load-frag",
                                 className="activity-ctrl-btn indexes-frag-btn",
                                 n_clicks=0,
                                 type="button",
-                                title="Optional — can time out on very large tables",
+                                title=t("indexes.btn.load_frag", loc),
                                 disabled=True,
                             ),
                             html.Div(id="indexes-frag-status", className="indexes-frag-status"),
@@ -363,14 +372,57 @@ def build_indexes_layout() -> html.Div:
                     html.Div(
                         id="indexes-explorer-table-list",
                         className="idx-ex-table-wrap indexes-explorer-list",
-                        children=render_explorer_table_list(None, None, ""),
+                        children=render_explorer_table_list(None, None, "", locale=loc),
+                    ),
+                    html.Div(
+                        id="indexes-ex-pagination",
+                        className="tables-pagination idx-ex-pagination",
+                        children=[
+                            html.Div(
+                                id="indexes-ex-pagination-info",
+                                className="tables-pagination-info",
+                                children="—",
+                            ),
+                            html.Div(
+                                className="tables-pagination-controls",
+                                children=[
+                                    html.Button(
+                                        "‹ Prev",
+                                        id="btn-indexes-ex-page-prev",
+                                        n_clicks=0,
+                                        type="button",
+                                        className="tables-page-btn",
+                                        disabled=True,
+                                    ),
+                                    html.Span(
+                                        id="indexes-ex-page-pos",
+                                        className="tables-page-pos",
+                                        children="—",
+                                    ),
+                                    html.Button(
+                                        "Next ›",
+                                        id="btn-indexes-ex-page-next",
+                                        n_clicks=0,
+                                        type="button",
+                                        className="tables-page-btn",
+                                        disabled=True,
+                                    ),
+                                ],
+                            ),
+                        ],
                     ),
                     html.Div(
                         id="indexes-explorer-subtabs-bar",
                         className="indexes-explorer-subtabs-bar is-disabled",
                         children=[
                             html.Button(
-                                [html.Span("Recommendations"), html.Span("0", id="indexes-rec-count", className="indexes-subtab-count")],
+                                [
+                                    html.Span(
+                                        t("indexes.view.recommendations", loc),
+                                        id="indexes-rec-label",
+                                    ),
+                                    html.Span("0", id="indexes-rec-count", className="indexes-subtab-count"),
+                                ],
                                 id="indexes-view-recommendations",
                                 className="indexes-subtab active",
                                 n_clicks=0,
@@ -378,13 +430,13 @@ def build_indexes_layout() -> html.Div:
                                 disabled=True,
                             ),
                             html.Button(
-                                "Index status",
+                                t("indexes.view.status", loc),
                                 id="indexes-view-status",
                                 className="indexes-subtab",
                                 n_clicks=0,
                                 type="button",
                                 disabled=True,
-                                title="Keys, includes, and usage for each index",
+                                title=t("indexes.view.status", loc),
                             ),
                         ],
                     ),
@@ -427,6 +479,7 @@ def build_indexes_layout() -> html.Div:
             dcc.Store(id="store-indexes-triage-visible", data=None),
             dcc.Store(id="store-indexes-table-visible", data=None),
             dcc.Store(id="store-indexes-table-sort", data="table"),
+            dcc.Store(id="store-indexes-table-page", data=1),
             dcc.Interval(
                 id="indexes-catalog-poll",
                 interval=1000,
@@ -505,13 +558,21 @@ def _fmt_size(mb) -> str:
     return f"{v:.1f} MB"
 
 
-def _chip(label: str, value, *, tone: str = ""):
-    display = fmt_int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else str(value)
+def _chip(label: str, value, *, tone: str = "", max_chars: int | None = None):
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        display = fmt_int(value)
+        title = display
+    else:
+        title = str(value if value is not None else "—")
+        display = title
+        if max_chars and len(display) > max_chars:
+            display = display[: max_chars - 1] + "…"
     return html.Div(
         className=f"indexes-stat-card {tone}".strip(),
+        title=title if title != display else None,
         children=[
             html.Div(label, className="indexes-stat-label"),
-            html.Div(display, className="indexes-stat-value", dir="ltr"),
+            html.Div(display, className="indexes-stat-value", dir="ltr", title=title),
         ],
     )
 
@@ -681,7 +742,8 @@ def render_selected_table(sel: dict | None):
     )
 
 
-def _render_table_header(payload: dict, *, view: str):
+def _render_table_header(payload: dict, *, view: str, locale: str = DEFAULT_LOCALE):
+    loc = normalize_locale(locale)
     meta = payload.get("table_meta") or {}
     health = payload.get("health") or {}
     schema = payload.get("schema_name")
@@ -699,26 +761,36 @@ def _render_table_header(payload: dict, *, view: str):
                     html.Span(db or "", className="indexes-table-db", dir="ltr"),
                 ]),
                 html.Span(
-                    "Needs optimization" if needs else "Looking healthy",
+                    t("indexes.health.needs", loc) if needs else t("indexes.health.ok", loc),
                     className=f"indexes-health-pill {'is-warn' if needs else 'is-ok'}",
                 ),
             ]),
             html.Div(
                 className="indexes-stat-row compact meta-only",
                 children=[
-                    _chip("Rows", meta.get("row_count") or 0),
-                    _chip("Size", _fmt_size(meta.get("size_mb"))),
-                    _chip("Indexes", health.get("indexes") or 0),
-                    _chip("Clustered", meta.get("clustered_index_name") or ("Heap" if payload.get("is_heap") else "—")),
-                    _chip("Primary key", meta.get("primary_key_name") or "—"),
-                    _chip("Advice items", rec_n, tone="is-warn" if rec_n else ""),
+                    _chip(t("indexes.meta.rows", loc), meta.get("row_count") or 0),
+                    _chip(t("indexes.meta.size", loc), _fmt_size(meta.get("size_mb"))),
+                    _chip(t("indexes.meta.indexes", loc), health.get("indexes") or meta.get("index_count") or 0),
+                    _chip(
+                        t("indexes.meta.clustered", loc),
+                        meta.get("clustered_index_name")
+                        or ("Heap" if payload.get("is_heap") else "—"),
+                        max_chars=22,
+                    ),
+                    _chip(
+                        t("indexes.meta.pk", loc),
+                        meta.get("primary_key_name") or "—",
+                        max_chars=22,
+                    ),
+                    _chip(t("indexes.meta.advice", loc), rec_n, tone="is-warn" if rec_n else ""),
                 ],
             ),
         ],
     )
 
 
-def _render_status_view(payload: dict) -> html.Div:
+def _render_status_view(payload: dict, locale: str = DEFAULT_LOCALE) -> html.Div:
+    loc = normalize_locale(locale)
     inv = payload.get("inventory") or []
     rels = payload.get("relationships") or []
     health = payload.get("health") or {}
@@ -842,7 +914,7 @@ def _render_status_view(payload: dict) -> html.Div:
     return html.Div(
         className="indexes-section-block",
         children=[
-            html.H3("Index status", className="indexes-section-title"),
+            html.H3(t("indexes.section.status", loc), className="indexes-section-title"),
             html.P(
                 "Glance at indexes that need attention first. Expand a row for KEY / INCLUDE details.",
                 className="indexes-section-lead",
@@ -854,14 +926,15 @@ def _render_status_view(payload: dict) -> html.Div:
     )
 
 
-def _render_recommendations_view(payload: dict) -> html.Div:
+def _render_recommendations_view(payload: dict, locale: str = DEFAULT_LOCALE) -> html.Div:
+    loc = normalize_locale(locale)
     recs = payload.get("recommendations") or []
 
     if not recs:
         return html.Div(
             className="indexes-section-block",
             children=[
-                html.H3("Recommendations", className="indexes-section-title"),
+                html.H3(t("indexes.section.recommendations", loc), className="indexes-section-title"),
                 html.P(
                     "No actionable recommendations for this table right now.",
                     className="indexes-empty-hint",
@@ -898,6 +971,7 @@ def _render_recommendations_view(payload: dict) -> html.Div:
     ]
 
     rec_index = 0
+    opened_one = False
     for cat in REC_CAT_ORDER:
         items = grouped.get(cat) or []
         if not items:
@@ -905,6 +979,12 @@ def _render_recommendations_view(payload: dict) -> html.Div:
         # Cap noisy extend list
         shown = items[:8] if cat == "IMPROVE_EXISTING" else items[:12]
         hidden_n = len(items) - len(shown)
+        # Always expand at least one group — heap-only tables land in INVESTIGATE,
+        # which used to stay collapsed and looked like "no data".
+        prefer_open = cat in ("REMOVE_CANDIDATE", "CONSOLIDATE")
+        group_open = prefer_open or not opened_one
+        if group_open:
+            opened_one = True
         group_children = [
             html.Summary(
                 className="indexes-rec-group-summary",
@@ -916,8 +996,15 @@ def _render_recommendations_view(payload: dict) -> html.Div:
             html.Div(
                 className="indexes-rec-group-body",
                 children=[
-                    _rec_card(r, rec_i, open_first=(rec_i == rec_index and cat != "IMPROVE_EXISTING"))
-                    for rec_i, r in enumerate(shown, start=rec_index)
+                    _rec_card(
+                        r,
+                        rec_i,
+                        open_first=(group_open and i == 0),
+                        locale=loc,
+                    )
+                    for i, (rec_i, r) in enumerate(
+                        zip(range(rec_index, rec_index + len(shown)), shown)
+                    )
                 ]
                 + (
                     [
@@ -934,7 +1021,7 @@ def _render_recommendations_view(payload: dict) -> html.Div:
         sections.append(
             html.Details(
                 className="indexes-rec-group",
-                open=(cat in ("REMOVE_CANDIDATE", "CONSOLIDATE")),
+                open=group_open,
                 children=group_children,
             )
         )
@@ -943,15 +1030,36 @@ def _render_recommendations_view(payload: dict) -> html.Div:
     return html.Div(className="indexes-section-block is-advice", children=sections)
 
 
-def _rec_card(r: dict, i: int, *, open_first: bool = False) -> html.Details:
+def _rec_card(r: dict, i: int, *, open_first: bool = False, locale: str = DEFAULT_LOCALE) -> html.Details:
+    loc = normalize_locale(locale)
+    try:
+        score = int(r.get("confidence_score")) if r.get("confidence_score") is not None else None
+    except (TypeError, ValueError):
+        score = None
+    reasons = r.get("confidence_reasons") or (
+        [r.get("confidence_reason")] if r.get("confidence_reason") else []
+    )
+    reasons = [str(x) for x in reasons if x]
+    blocked = r.get("script_blocked_reason")
+    allow_copy = bool(
+        not blocked and (score is None or score >= INDEX_CONFIDENCE_SCRIPT_MIN)
+    )
+    # When score is known and below gate, never show copy buttons
+    if score is not None and score < INDEX_CONFIDENCE_SCRIPT_MIN:
+        allow_copy = False
+
     scripts = []
     for j, s in enumerate(r.get("scripts") or []):
+        if not (s.get("tsql") or "").strip():
+            continue
+        if not allow_copy:
+            continue
         scripts.append(
             html.Div(
                 className="indexes-script-row",
                 children=[
                     html.Button(
-                        s.get("label") or "Copy script",
+                        t("indexes.script.copy", loc),
                         id={"type": "indexes-copy-btn", "index": i, "script": j},
                         className="indexes-copy-btn",
                         n_clicks=0,
@@ -976,9 +1084,55 @@ def _rec_card(r: dict, i: int, *, open_first: bool = False) -> html.Details:
             ev_bits.append(f"frag: {float(v):.1f}%")
         elif k in ("a", "b", "related_index", "kind") and v:
             ev_bits.append(f"{k}: {v}")
+        elif k == "heap" and v:
+            ev_bits.append("type: HEAP")
 
     headline = _truncate(r.get("problem") or r.get("suggested_action") or "Recommendation", 90)
     action_short = _truncate(r.get("suggested_action") or "", 100)
+
+    body_children = [
+        html.P(_truncate(r.get("why") or "", 220), className="idx-rec-why"),
+        html.Div(", ".join(ev_bits) if ev_bits else "", className="idx-rec-evidence", dir="ltr"),
+        html.P(action_short, className="idx-rec-action"),
+    ]
+
+    conf_bits = []
+    if score is not None:
+        conf_bits.append(
+            html.Div(
+                t("indexes.script.confidence", loc, score=score),
+                className="idx-script-confidence",
+                dir="ltr",
+            )
+        )
+    if reasons:
+        conf_bits.append(
+            html.Div(
+                t("indexes.script.reasons", loc, reasons="; ".join(reasons[:3])),
+                className="idx-script-reasons",
+            )
+        )
+    if conf_bits:
+        body_children.append(html.Div(conf_bits, className="idx-script-meta"))
+
+    if blocked or (score is not None and score < INDEX_CONFIDENCE_SCRIPT_MIN):
+        body_children.append(
+            html.P(
+                blocked
+                or t(
+                    "indexes.script.blocked",
+                    loc,
+                    score=score if score is not None else 0,
+                    min=INDEX_CONFIDENCE_SCRIPT_MIN,
+                ),
+                className="indexes-script-blocked",
+            )
+        )
+    elif scripts:
+        body_children.append(
+            html.Div(t("indexes.script.suggested", loc), className="idx-script-title")
+        )
+        body_children.append(html.Div(scripts))
 
     return html.Details(
         className=REC_CAT_CSS.get(r.get("category") or "", "idx-rec"),
@@ -995,17 +1149,10 @@ def _rec_card(r: dict, i: int, *, open_first: bool = False) -> html.Details:
                     html.Span(f"Risk: {_truncate(r.get('risk'), 40)}", className="idx-rec-risk-inline"),
                 ],
             ),
-            html.Div(
-                className="idx-rec-body",
-                children=[
-                    html.P(_truncate(r.get("why") or "", 220), className="idx-rec-why"),
-                    html.Div(", ".join(ev_bits) if ev_bits else "", className="idx-rec-evidence", dir="ltr"),
-                    html.P(action_short, className="idx-rec-action"),
-                    html.Div(scripts),
-                ],
-            ),
+            html.Div(className="idx-rec-body", children=body_children),
         ],
     )
+
 
 
 def render_explorer(
@@ -1013,14 +1160,34 @@ def render_explorer(
     *,
     selected: dict | None = None,
     view: str = "recommendations",
+    locale: str = DEFAULT_LOCALE,
 ):
+    loc = normalize_locale(locale)
     if not selected:
         return render_explorer_idle()
+    # While a job runs, keep idle here — the fixed overlay shows the only spinner.
     if not payload:
-        full = f"{selected.get('schema')}.{selected.get('table')}"
-        return render_explorer_loading(full)
+        return render_explorer_idle()
 
     view = view if view in ("status", "recommendations") else "recommendations"
-    header = _render_table_header(payload, view=view)
-    body = _render_status_view(payload) if view == "status" else _render_recommendations_view(payload)
-    return html.Div(className="indexes-explorer-inner", children=[header, body])
+    if view == "status":
+        body = html.Div(
+            className="idx-ex-body",
+            children=[
+                render_explore_header(payload, locale=loc),
+                _render_audit_table(payload, loc),
+            ],
+        )
+    else:
+        body = html.Div(
+            className="idx-ex-body",
+            children=[
+                render_explore_header(payload, locale=loc),
+                _render_missing_section(payload, loc),
+                _render_recommendations_view(payload, locale=loc),
+            ],
+        )
+    return html.Div(
+        className="indexes-explorer-inner idx-ex-root",
+        children=[body],
+    )
