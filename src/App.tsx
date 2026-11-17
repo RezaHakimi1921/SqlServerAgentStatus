@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import ActivityView from "./ActivityView";
 import FleetView from "./FleetView";
 import TimelineView from "./TimelineView";
 
@@ -268,6 +269,7 @@ const jobs = [
 
 const nav = [
   { key: "overview", label: "نمای کلی", icon: "grid" as IconName },
+  { key: "activity", label: "مانیتورینگ Activity", icon: "health" as IconName, badge: "۱" },
   { key: "health", label: "مدیریت سرورها", icon: "server" as IconName, badge: "۳" },
   { key: "jobs", label: "جاب‌ها", icon: "jobs" as IconName, badge: "۸۷" },
   { key: "timeline", label: "خط زمانی", icon: "timeline" as IconName },
@@ -315,7 +317,13 @@ function App() {
   const switchNav = (key: string) => {
     setActiveNav(key);
     setMobileNav(false);
-    if (key !== "overview" && key !== "jobs" && key !== "health" && key !== "timeline")
+    if (
+      key !== "overview" &&
+      key !== "jobs" &&
+      key !== "activity" &&
+      key !== "health" &&
+      key !== "timeline"
+    )
       showToast("این نما در نسخه نمایشی به نمای کلی متصل است");
   };
 
@@ -425,6 +433,8 @@ function App() {
               <h1>
                 {activeNav === "jobs"
                   ? "فهرست جاب‌ها"
+                  : activeNav === "activity"
+                    ? "مانیتورینگ Activity و Sessionها"
                   : activeNav === "health"
                     ? "مدیریت سرورها"
                     : activeNav === "timeline"
@@ -432,7 +442,9 @@ function App() {
                       : "صبح بخیر، رضا"}
               </h1>
               <p>
-                {activeNav === "health"
+                {activeNav === "activity"
+                  ? "درخواست‌های جاری، Waitها، Blocking و Sessionهای SQL Server را لحظه‌ای بررسی کنید."
+                  : activeNav === "health"
                   ? "سلامت، دسترس‌پذیری و تازگی داده تمام SQL Serverها را مدیریت کنید."
                   : activeNav === "timeline"
                     ? "برنامه و اجرای واقعی Jobها را در طول روز مقایسه کنید."
@@ -450,7 +462,9 @@ function App() {
             </div>
           </div>
 
-          {activeNav === "health" ? (
+          {activeNav === "activity" ? (
+            <ActivityView />
+          ) : activeNav === "health" ? (
             <FleetView />
           ) : activeNav === "timeline" ? (
             <TimelineView />
